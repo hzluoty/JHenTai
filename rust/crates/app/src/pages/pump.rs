@@ -14,6 +14,7 @@ use slint::Timer;
 pub struct UiEvents {
     pub covers: AtomicBool,
     pub details_thumbs: AtomicBool,
+    pub reader: AtomicBool,
 }
 
 impl UiEvents {
@@ -23,6 +24,14 @@ impl UiEvents {
 
     pub fn request_details_thumbs(&self) {
         self.details_thumbs.store(true, Ordering::Relaxed);
+    }
+
+    pub fn request_reader(&self) {
+        self.reader.store(true, Ordering::Relaxed);
+    }
+
+    pub fn take_reader(&self) -> bool {
+        self.reader.swap(false, Ordering::Relaxed)
     }
 
     pub fn take_covers(&self) -> bool {
@@ -47,6 +56,12 @@ pub fn start(timer: &Timer, controller: &Rc<crate::AppController>, interval: Dur
         if this.ui_events.take_details_thumbs() {
             this.load_detail_thumbnails();
         }
+        if this.ui_events.take_reader() {
+            this.drain_reader_pending();
+        }
+        if this.more_thumbs_wanted.swap(false, Ordering::Relaxed) {
+            this.fetch_more_thumbnails();
+        }
         // 返回键：Java 主线程只置标志，出栈必须在 UI 线程
         if crate::nav::BACK_REQUESTED.swap(false, Ordering::Relaxed) {
             this.go_back();
@@ -69,5 +84,9 @@ mod tests {
         events.request_details_thumbs();
         assert!(events.take_details_thumbs());
         assert!(!events.take_details_thumbs());
+
+        events.request_reader();
+        assert!(events.take_reader());
+        assert!(!events.take_reader());
     }
 }

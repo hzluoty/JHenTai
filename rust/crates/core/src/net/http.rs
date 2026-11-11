@@ -163,29 +163,72 @@ pub async fn get(client: &reqwest::Client, state: &Arc<Mutex<NetState>>, resolve
 }
 
 /// 下载二进制内容（图片、种子等）：只注入 cookie，不做业务正文校验。
+///
+/// 图片常被 302 到别的图床（client 级 redirect 是关的，E-H 页面需要自己读 Location），
+/// 这里手动跟最多 `MAX_REDIRECTS` 跳。
 pub async fn get_bytes(
     client: &reqwest::Client,
     state: &Arc<Mutex<NetState>>,
     resolver: &FrontingResolver,
     url: &str,
 ) -> Result<(u16, Vec<u8>), RequestError> {
-    {
-        let guard = state.lock().map_err(|e| RequestError::Network(e.to_string()))?;
-        prepare(url, &guard)?;
-        resolver.set_enabled(guard.options.enable_domain_fronting);
+    get_bytes_with_referer(client, state, resolver, url, None).await
+}
+
+/// 带 `Referer` 的二进制下载：E-H 的图床会拒绝没有 referer 的直链。
+pub async fn get_bytes_with_referer(
+    client: &reqwest::Client,
+    state: &Arc<Mutex<NetState>>,
+    resolver: &FrontingResolver,
+    url: &str,
+    referer: Option<&str>,
+) -> Result<(u16, Vec<u8>), RequestError> {
+    const MAX_REDIRECTS: usize = 5;
+    let mut current = url.to_string();
+
+    for _ in 0..=MAX_REDIRECTS {
+        {
+            let guard = state.lock().map_err(|e| RequestError::Network(e.to_string()))?;
+            prepare(&current, &guard)?;
+            resolver.set_enabled(guard.options.enable_domain_fronting);
+        }
+        let cookie_header = state.lock().map(|g| g.cookies.header_value()).unwrap_or_default();
+        let mut request = client.get(&current);
+        if !cookie_header.is_empty() {
+            request = request.header(reqwest::header::COOKIE, cookie_header);
+        }
+        if let Some(referer) = referer {
+            request = request.header(reqwest::header::REFERER, referer);
+        }
+        let response = request.send().await.map_err(|e| RequestError::Network(e.to_string()))?;
+        let status = response.status().as_u16();
+
+        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+            let location = response.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()).map(str::to_string);
+            let Some(location) = location else {
+                return Err(RequestError::Network(format!("redirect {status} without Location")));
+            };
+            current = absolute_url(&current, &location)?;
+            continue;
+        }
+        if status == 403 {
+            return Err(RequestError::Eh(EhSiteException::new(EhSiteExceptionKind::Cloudflare, "cloudflare403").no_pause()));
+        }
+
+        let bytes = response.bytes().await.map_err(|e| RequestError::Network(e.to_string()))?;
+        return Ok((status, bytes.to_vec()));
     }
-    let cookie_header = state.lock().map(|g| g.cookies.header_value()).unwrap_or_default();
-    let mut request = client.get(url);
-    if !cookie_header.is_empty() {
-        request = request.header(reqwest::header::COOKIE, cookie_header);
+
+    Err(RequestError::Network(format!("too many redirects: {url}")))
+}
+
+/// 把 Location 解析成绝对地址
+fn absolute_url(base: &str, location: &str) -> Result<String, RequestError> {
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return Ok(location.to_string());
     }
-    let response = request.send().await.map_err(|e| RequestError::Network(e.to_string()))?;
-    let status = response.status().as_u16();
-    if status == 403 {
-        return Err(RequestError::Eh(EhSiteException::new(EhSiteExceptionKind::Cloudflare, "cloudflare403").no_pause()));
-    }
-    let bytes = response.bytes().await.map_err(|e| RequestError::Network(e.to_string()))?;
-    Ok((status, bytes.to_vec()))
+    let base = reqwest::Url::parse(base).map_err(|e| RequestError::Network(e.to_string()))?;
+    base.join(location).map(|u| u.to_string()).map_err(|e| RequestError::Network(e.to_string()))
 }
 
 /// 发送 POST 表单。
@@ -277,6 +320,16 @@ mod tests {
         let resolver = FrontingResolver::with_provider(state.ip_provider.clone());
         resolver.set_enabled(true);
         assert!(build_client(&state, &resolver).is_ok());
+    }
+
+    #[test]
+    fn absolute_url_resolves_relative() {
+        assert_eq!(super::absolute_url("https://e-hentai.org/a/b", "/img/1.jpg").unwrap(), "https://e-hentai.org/img/1.jpg");
+        assert_eq!(
+            super::absolute_url("https://e-hentai.org/a/b", "https://ehgt.org/x.jpg").unwrap(),
+            "https://ehgt.org/x.jpg"
+        );
+        assert_eq!(super::absolute_url("https://e-hentai.org/a/b", "c.jpg").unwrap(), "https://e-hentai.org/a/c.jpg");
     }
 
     /// 域前置接线：关闭时走系统解析；开启后按 host 命中 IP 池并跳过冷却 IP；池外 host 不受影响

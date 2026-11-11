@@ -61,8 +61,8 @@ adb shell am start -n top.jtmonster.jhentai/.MainActivity
 | M0 工具链 + spike | ✅ 工具链跑通；Slint 1.18.1 在模拟器上跑通列表 + 手势基础 |
 | M1 core: model/parser/net | ✅ 解析器金样测试（真实页面 fixture）+ 域前置/代理/cookie |
 | M2 core: db/config/services | 🟡 db v25 接管、`local_config`、账号/历史/阅读进度/搜索已完成；标签翻译、屏蔽规则未做 |
-| M3 UI 骨架 + 浏览 | 🟡 导航、6 个 tab、列表卡片、封面、详情页（含缩略图/标签/评论预览）已完成；搜索 UI、登录页、3 种卡片样式未做 |
-| M4 阅读器 | ⬜ |
+| M3 UI 骨架 + 浏览 | 🟡 导航、6 个 tab、列表卡片、封面、详情页（含缩略图/标签/评论预览、多页缩略图补全）已完成；搜索 UI、登录页、3 种卡片样式未做 |
+| M4 阅读器 | 🟡 横向单页 + 点击翻页 + 预加载 ±1 + 图片缓存窗口 + 续读进度/多页缩略图已通 | 纵向/双页、缩放、音量键、自动翻页、亮度/常亮、保存分享未做 |
 | M5 下载 | ⬜ |
 | M6 设置/安全/同步/i18n | ⬜ |
 | M7 切换与发布 | ⬜ |
@@ -71,4 +71,5 @@ adb shell am start -n top.jtmonster.jhentai/.MainActivity
 
 - 网络/解码在 tokio 线程，结果只能通过 `ui_events`（`pages/pump.rs`）里的原子标志回到 UI 线程；`slint::Image`、`VecModel` 都是 `!Send`，只能在 UI 线程构造。
 - 页栈 → UI 只走 `AppController::show_page`；返回键由 `MainActivity.dispatchKeyEvent` → `nativeOnBack` → `NAV_DEPTH`/`BACK_REQUESTED` 原子量 → UI 泵出栈。
-- 异步回填写回模型前必须校验身份（列表按 gid、缩略图按 href），否则切页会画错行。
+- 异步回填写回模型前必须校验身份（列表按 gid、缩略图按 href、阅读器按 gid + 索引边界），
+  否则切页会画错行；索引类容器还要校验 `index < len`，否则会 panic。

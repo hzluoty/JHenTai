@@ -271,6 +271,37 @@ pub mod local_config {
     }
 }
 
+/// `local_config` 的 `ConfigStore` 实现（生产环境用）。
+///
+/// `rusqlite::Connection` 不是 `Sync`，所以外面套 `Mutex` 后再给 app 共享。
+pub struct SqliteConfigStore {
+    conn: Connection,
+}
+
+impl SqliteConfigStore {
+    pub fn new(conn: Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+}
+
+impl crate::config::ConfigStore for SqliteConfigStore {
+    fn read(&self, config_key: &str, sub_config_key: &str) -> Option<String> {
+        local_config::read(&self.conn, config_key, sub_config_key).ok().flatten()
+    }
+
+    fn write(&mut self, config_key: &str, sub_config_key: &str, value: &str) {
+        let _ = local_config::write(&self.conn, config_key, sub_config_key, value);
+    }
+
+    fn delete(&mut self, config_key: &str, sub_config_key: &str) {
+        let _ = local_config::delete(&self.conn, config_key, sub_config_key);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,6 +421,19 @@ mod tests {
             Err(DbError::LegacyVersion { found }) => assert_eq!(found, 24),
             other => panic!("expected LegacyVersion, got {other:?}", other = other.err()),
         }
+    }
+
+    #[test]
+    fn sqlite_config_store_roundtrip() {
+        use crate::config::ConfigStore;
+
+        let (_dir, conn) = temp_db();
+        let mut store = SqliteConfigStore::new(conn);
+        assert_eq!(store.read("EHSetting", ""), None);
+        store.write("EHSetting", "", r#"{"site":"EX"}"#);
+        assert_eq!(store.read("EHSetting", "").as_deref(), Some(r#"{"site":"EX"}"#));
+        store.delete("EHSetting", "");
+        assert_eq!(store.read("EHSetting", ""), None);
     }
 
     #[test]

@@ -152,7 +152,7 @@ pub fn apply_page(state: &mut ListState, page: GalleryPageInfo) {
     state.galleries = page.galleries;
 }
 
-/// Rust 侧 controller：持有 Slint window 与网络状态
+/// Rust 侧 controller：组合根（窗口 + 网络 + 页栈 + 各页状态）
 pub struct AppController {
     pub(crate) window: AppWindow,
     pub(crate) net: Arc<Mutex<NetState>>,
@@ -168,12 +168,24 @@ pub struct AppController {
     pub(crate) ui_events: Arc<crate::pages::pump::UiEvents>,
     /// UI 事件泵（页面级定时器都走它）
     pub(crate) ui_pump_timer: slint::Timer,
+    /// 详情页还有多页缩略图待补全
+    pub(crate) more_thumbs_wanted: Arc<std::sync::atomic::AtomicBool>,
+    /// 阅读器状态（跨线程，只装 Send 数据）
+    pub(crate) reader: Arc<Mutex<crate::pages::reader::ReaderState>>,
+    /// 阅读器已解码的图片（只在 UI 线程读写）
+    pub(crate) reader_images: Rc<std::cell::RefCell<crate::pages::reader::ReaderImages>>,
+    /// 设置存储（`local_config`）；打不开时降级为内存
+    pub(crate) store: Arc<Mutex<Box<dyn jhentai_core::config::ConfigStore + Send>>>,
+    /// false 表示设置/阅读进度不会落盘（关于页要提示）
+    pub store_is_persistent: bool,
     pub(crate) runtime: tokio::runtime::Runtime,
 }
 
 impl AppController {
-    pub fn new(options: ClientOptions) -> Result<Self, String> {
+    /// `data_dir`：`getExternalFilesDir(null)`，里面是 `db.sqlite`
+    pub fn new(options: ClientOptions, data_dir: Option<std::path::PathBuf>) -> Result<Self, String> {
         let window = AppWindow::new().map_err(|e| e.to_string())?;
+        let opened = crate::store::open(data_dir.as_deref());
         let net = NetState::shared(options);
         let (resolver, client) = {
             let guard = net.lock().map_err(|e| e.to_string())?;
@@ -197,6 +209,11 @@ impl AppController {
             nav: std::cell::RefCell::new(crate::nav::Navigator::new()),
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
+            more_thumbs_wanted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            reader: Arc::new(Mutex::new(crate::pages::reader::ReaderState::default())),
+            reader_images: Rc::new(std::cell::RefCell::new(crate::pages::reader::ReaderImages::default())),
+            store: Arc::new(Mutex::new(opened.store)),
+            store_is_persistent: opened.persistent,
             runtime,
         })
     }
@@ -221,6 +238,20 @@ impl AppController {
                 if let Some((gid, token, is_eh)) = target {
                     this.open_details(gid, token, !is_eh);
                 }
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_reader_step(move |delta| {
+            if let Some(this) = weak.upgrade() {
+                this.reader_step(delta as i64);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_open_reader(move || {
+            if let Some(this) = weak.upgrade() {
+                this.open_reader();
             }
         });
 

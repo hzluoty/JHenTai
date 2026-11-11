@@ -10,8 +10,6 @@ pub enum Page {
     },
     Read {
         gid: i64,
-        token: String,
-        index: i64,
     },
     Downloads,
     Settings,

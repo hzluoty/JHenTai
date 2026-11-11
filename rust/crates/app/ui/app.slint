@@ -169,7 +169,15 @@ export component AppWindow inherits Window {
     in-out property <bool> detail-loading: false;
     in-out property <string> detail-error: "";
 
+    // ---- reader page ----
+    in-out property <image> reader-current;
+    in-out property <int> reader-index: 0;
+    in-out property <int> reader-total: 0;
+    in-out property <string> reader-error: "";
+
     // ---- callbacks to Rust ----
+    callback reader-step(int);
+    callback open-reader();
     callback back();
     callback refresh();
     callback next-page();
@@ -262,6 +270,56 @@ export component AppWindow inherits Window {
             }
         }
 
+        // 阅读器（page 2）：整屏图片，左右 1/3 点击翻页，中间退出
+        if page == 2 : Rectangle {
+            background: #000000;
+            Image {
+                source: reader-current;
+                width: 100%;
+                height: 100%;
+                image-fit: contain;
+            }
+            if reader-error != "" : Text {
+                text: reader-error;
+                color: Theme.danger;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                // 左 1/3 上一页
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: transparent;
+                    TouchArea { clicked => { root.reader-step(-1); } }
+                }
+                // 中 1/3 返回
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: transparent;
+                    TouchArea { clicked => { root.back(); } }
+                }
+                // 右 1/3 下一页
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: transparent;
+                    TouchArea { clicked => { root.reader-step(1); } }
+                }
+            }
+            Rectangle {
+                height: 32px;
+                y: root.height - 32px - safe-area-bottom;
+                background: #00000080;
+                Text {
+                    text: (reader-index + 1) + " / " + reader-total;
+                    color: #ffffff;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
         // 详情页
         if page == 1 : ScrollView {
             VerticalLayout {
@@ -332,6 +390,11 @@ export component AppWindow inherits Window {
                         color: Theme.fg-dim;
                         font-size: 12px;
                         wrap: word-wrap;
+                    }
+
+                    Button {
+                        text: "Read (" + detail-pages + " pages)";
+                        clicked => { root.open-reader(); }
                     }
 
                     Text { text: "Tags"; color: Theme.fg; font-size: 14px; font-weight: 600; }

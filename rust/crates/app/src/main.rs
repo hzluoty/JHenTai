@@ -9,7 +9,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     options.enable_domain_fronting = false;
 
-    let controller = std::rc::Rc::new(jhentai::AppController::new(options)?);
+    let data_dir = platform.external_data_path();
+    let controller = std::rc::Rc::new(jhentai::AppController::new(options, Some(data_dir))?);
     controller.wire_callbacks();
     controller.window().set_current_tab(0);
     controller.load_first_page();

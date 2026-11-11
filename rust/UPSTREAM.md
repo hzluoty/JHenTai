@@ -13,6 +13,8 @@
 | 列表时间字段 | `.gl2c > div:nth-child(2) > [id]` | 先试该选择器，再退 `.gl2c [id^=posted_]` | 同上，现网结构已变 |
 | 标签解析 | 有 namespace 才拆 | 无 namespace 时归入 `temp`（与 Dart 一致），但 key 清洗用 `td_` 前缀裁剪 | 保持 i18n key 一致 |
 | 图片解码 | extended_image 自动处理 | core::image 按显示宽度降采样解码 | 大图内存对策（计划 §7） |
+| 阅读图片源 | 默认 `#img` 直链，可切换原图 | 只用 `#img` 直链 | `fullimg` 原图接口匿名访问会 302 到登录页；原图留给 M5 的「下载原图」 |
+| 图片请求 | dio 默认 | 手动跟 302 + 带 `Referer` | 图床会 302 到 CDN 且校验来源 |
 
 ## 已删除（不移植，见计划 §2.1）
 

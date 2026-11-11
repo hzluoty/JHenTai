@@ -128,6 +128,7 @@ impl crate::AppController {
         let window_weak = self.window.as_weak();
         let details = self.details.clone();
         let ui_events = self.ui_events.clone();
+        let more_thumbs_wanted = self.more_thumbs_wanted.clone();
 
         self.runtime.spawn(async move {
             let parsed = match jhentai_core::net::get(&client, &net, &resolver, &url).await {
@@ -154,16 +155,75 @@ impl crate::AppController {
                         window.set_detail_comments(Rc::new(slint::VecModel::from(comments_to_items(&detail))).into());
                         window.set_detail_thumbnail_pages(detail.thumbnails_page_count as i32);
 
+                        let need_more = detail.thumbnails_page_count > 1;
                         {
                             let mut guard = details.lock().unwrap();
                             guard.gid = detail.gallery_url.gid;
                             guard.loaded_thumbnails.clear();
-                            guard.detail = Some(detail);
+                            guard.detail = Some(detail.clone());
                         }
                         ui_events.request_details_thumbs();
+
+                        // 多页缩略图画廊：置标志，由 UI 泵发起补全（Rc 不能进闭包）
+                        if need_more {
+                            more_thumbs_wanted.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
                     }
                     Err(e) => window.set_detail_error(format!("{e}").into()),
                 }
+            });
+        });
+    }
+
+    /// 后台抓全量缩略图（多页画廊），完成后替换详情页列表。
+    ///
+    /// 由 UI 泵在 `more_thumbs_wanted` 置位后调用（`Rc` 只能活在 UI 线程）。
+    pub fn fetch_more_thumbnails(self: &Rc<Self>) {
+        let Some(detail) = self.details.lock().ok().and_then(|g| g.detail.clone()) else {
+            return;
+        };
+        if detail.thumbnails_page_count <= 1 {
+            return;
+        }
+        let client = self.client.clone();
+        let net = self.net.clone();
+        let resolver = self.resolver.clone();
+        let details = self.details.clone();
+        let window_weak = self.window.as_weak();
+        let ui_events = self.ui_events.clone();
+        let more_thumbs_wanted = self.more_thumbs_wanted.clone();
+        let gid = detail.gallery_url.gid;
+
+        self.runtime.spawn(async move {
+            let all = jhentai_core::service::reader::fetch_all_thumbnails(
+                &client,
+                &net,
+                &resolver,
+                &detail.gallery_url,
+                &detail.thumbnails,
+                detail.thumbnails_page_count,
+            )
+            .await;
+            let Ok(all) = all else { return };
+
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = window_weak.upgrade() else {
+                    return;
+                };
+                let mut guard = details.lock().unwrap();
+                // 用户可能已经切走：gid 不匹配就丢弃
+                if guard.gid != gid {
+                    return;
+                }
+                if let Some(current) = guard.detail.as_mut() {
+                    current.thumbnails = all;
+                }
+                let items = guard.detail.as_ref().map(thumbnails_to_items).unwrap_or_default();
+                guard.loaded_thumbnails.clear();
+                drop(guard);
+
+                window.set_detail_thumbnails(Rc::new(slint::VecModel::from(items)).into());
+                ui_events.request_details_thumbs();
             });
         });
     }
@@ -254,10 +314,9 @@ impl crate::AppController {
         match page {
             crate::nav::Page::GalleryList => self.window.set_page(0),
             crate::nav::Page::Details { .. } => self.window.set_page(1),
-            // shortcut: 阅读/下载/设置页的 UI 在 M4/M5/M6 接入，先回到列表避免白屏
-            crate::nav::Page::Read { .. } | crate::nav::Page::Downloads | crate::nav::Page::Settings => {
-                self.window.set_page(0)
-            }
+            crate::nav::Page::Read { .. } => self.window.set_page(2),
+            // shortcut: 下载/设置页的 UI 在 M5/M6 接入，先回到列表避免白屏
+            crate::nav::Page::Downloads | crate::nav::Page::Settings => self.window.set_page(0),
         }
     }
 }

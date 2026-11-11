@@ -48,7 +48,8 @@ fn run(app: slint::android::AndroidApp) -> Result<(), Box<dyn std::error::Error>
         .system_proxy()
         .map(|proxy| if proxy.starts_with("http") { proxy } else { format!("http://{proxy}") });
 
-    let controller = Rc::new(crate::AppController::new(options)?);
+    let data_dir = platform.external_data_path();
+    let controller = Rc::new(crate::AppController::new(options, Some(data_dir))?);
     controller.wire_callbacks();
     controller.load_first_page();
     controller.run()?;
