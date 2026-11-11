@@ -1,7 +1,7 @@
 //! `ui/app.slint` 结构守卫。
 //!
 //! Slint 缺一整个页面块**不会**产生编译错误（第 20 轮就因此丢掉过详情页），
-//! 所以用测试把「每个页面恰好一块、关键属性仍被引用」钉死。
+//! 所以用测试把「每个页面块存在、关键属性仍被引用、整页块不重复」钉死。
 
 fn ui_source() -> String {
     std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/ui/app.slint")).expect("读取 app.slint")

@@ -285,7 +285,8 @@ export component AppWindow inherits Window {
                 if page == 2 : Button { text: "save"; clicked => { root.save-image(); } }
                 if page == 2 : Button { text: "share"; clicked => { root.share-image(); } }
                 if page == 0 : Text {
-                    text: tab-titles[current-tab];
+                    // 搜索时标题显示实际数据源，避免"在 Popular 页看到搜索结果的标题"
+                    text: searching ? ("Search: " + search-text) : tab-titles[current-tab];
                     color: Theme.fg;
                     font-size: 18px;
                     font-weight: 600;

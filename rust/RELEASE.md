@@ -42,7 +42,7 @@
   现在加了 `crates/app/tests/ui_structure.rs` 结构守卫（每个页面块存在、关键接线仍引用、块不重复、括号配平），
   但计划 §4.3 的「每页一个 component」拆分仍未做——下一步 UI 功能之前应完成。
 - `reader_error` 目前兼任「保存/分享结果提示」，M6 做通知/状态条时应拆开。
-- 搜索时顶栏仍显示原 tab 名（数据源固定 `SearchType::Gallery`），应显示 `Search: <keyword>`。
+- 搜索时顶栏改为显示 `Search: <keyword>`（已修）。
 
 ## 与 Flutter 版的数据兼容
 
