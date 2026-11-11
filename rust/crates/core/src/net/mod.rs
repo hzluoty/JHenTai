@@ -449,6 +449,21 @@ impl GalleryQuery {
     }
 }
 
+/// 把 `host:port` 形式的系统代理补成 reqwest 能接受的 URL。
+/// Android 的 `Settings.Global.http_proxy` 只给 `host:port`，reqwest 需要 scheme。
+pub fn normalize_proxy(proxy: Option<String>) -> Option<String> {
+    let proxy = proxy?;
+    let trimmed = proxy.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("socks") {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("http://{trimmed}"))
+    }
+}
+
 /// 最小百分号编码（E-H 查询参数只需要这个子集）
 pub fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -564,6 +579,15 @@ mod tests {
         let cats = pairs.iter().find(|(k, _)| k == "f_cats").unwrap();
         assert_eq!(cats.1, (((1u32 << 10) - 1) & !(1 << 0) & !(1 << 9)).to_string());
         assert!(pairs.iter().any(|(k, v)| k == "f_srdd" && v == "3"));
+    }
+
+    #[test]
+    fn proxy_normalization() {
+        assert_eq!(normalize_proxy(None), None);
+        assert_eq!(normalize_proxy(Some("  ".into())), None);
+        assert_eq!(normalize_proxy(Some("10.0.2.2:10808".into())).as_deref(), Some("http://10.0.2.2:10808"));
+        assert_eq!(normalize_proxy(Some("http://a:1".into())).as_deref(), Some("http://a:1"));
+        assert_eq!(normalize_proxy(Some("socks5h://a:2".into())).as_deref(), Some("socks5h://a:2"));
     }
 
     #[test]

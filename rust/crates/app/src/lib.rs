@@ -6,6 +6,7 @@
 pub mod nav;
 #[cfg(target_os = "android")]
 pub mod android;
+pub mod i18n;
 pub mod pages;
 pub mod store;
 

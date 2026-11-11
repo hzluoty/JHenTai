@@ -30,6 +30,16 @@ pub trait GalleryListSource {
     fn name(&self) -> &'static str;
     /// 页面 URL；空串表示数据来自本地（历史页）
     fn url(&self, cursor: &PageCursor) -> String;
+
+    /// 站点选择（EH / EX）——与 core 的 `SearchType::base_url(is_ex)` 同构
+    fn url_on(&self, cursor: &PageCursor, is_ex: bool) -> String {
+        let url = self.url(cursor);
+        if is_ex {
+            url.replacen(jhentai_core::net::consts::EH_INDEX, jhentai_core::net::consts::EX_INDEX, 1)
+        } else {
+            url
+        }
+    }
 }
 
 /// 首页 / 热门 / 排行 / 收藏 / 关注 / 历史
@@ -275,6 +285,13 @@ impl AppController {
         });
 
         let weak = Rc::downgrade(self);
+        self.window.on_cycle_language(move || {
+            if let Some(this) = weak.upgrade() {
+                this.cycle_language();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
         self.window.on_set_account_user(move |text| {
             if let Some(this) = weak.upgrade() {
                 this.window.set_account_user(text);
@@ -472,11 +489,9 @@ impl AppController {
     /// 按游标加载（异步，结果回 UI 线程）
     pub fn load(self: &Rc<Self>, cursor: PageCursor) {
         let tab = self.state.lock().map(|g| g.tab).unwrap_or_default();
-        let mut url = tab.url(&cursor);
-        // 站点设置：选了 EX 就把 E-H 域名换成 EX（cookie 里没 igneous 时 EX 会退化为空白页）
-        if self.settings.borrow().eh.is_ex() {
-            url = url.replace(jhentai_core::net::consts::EH_INDEX, jhentai_core::net::consts::EX_INDEX);
-        }
+        // 站点设置：选了 EX 就用 EX 域名（cookie 里没 igneous 时 EX 会是空白页）
+        let is_ex = self.settings.borrow().eh.is_ex();
+        let url = tab.url_on(&cursor, is_ex);
         if url.is_empty() {
             self.window.set_galleries(Rc::new(slint::VecModel::from(Vec::<GalleryItem>::new())).into());
             self.window.set_error_text("History comes from the local database (M2)".into());

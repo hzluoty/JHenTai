@@ -205,6 +205,17 @@ export component AppWindow inherits Window {
     in-out property <bool> account-logged-in: false;
     in-out property <string> account-status: "";
     in-out property <string> account-user: "";
+    in-out property <string> setting-language: "en_US";
+    in-out property <[string]> tab-titles: ["Front Page", "Popular", "Ranklist", "Favorites", "Watched", "History"];
+    in-out property <string> ui-read: "Read";
+    in-out property <string> ui-download: "Download";
+    in-out property <string> ui-back: "Back";
+    in-out property <string> ui-tags: "Tags";
+    in-out property <string> ui-comments: "Comments";
+    in-out property <string> ui-about: "About";
+    in-out property <string> ui-settings: "Settings";
+    in-out property <string> ui-language: "Language";
+    callback cycle-language();
     in-out property <string> account-password: "";
     callback set-account-user(string);
     callback set-account-password(string);
@@ -248,15 +259,11 @@ export component AppWindow inherits Window {
                 alignment: space-between;
 
                 if page != 0 : Button {
-                    text: "‹ Back";
+                    text: "‹ " + ui-back;
                     clicked => { root.back(); }
                 }
                 if page == 0 : Text {
-                    text: current-tab == 0 ? "Front Page"
-                        : current-tab == 1 ? "Popular"
-                        : current-tab == 2 ? "Ranklist"
-                        : current-tab == 3 ? "Favorites"
-                        : current-tab == 4 ? "Watched" : "History";
+                    text: tab-titles[current-tab];
                     color: Theme.fg;
                     font-size: 18px;
                     font-weight: 600;
@@ -389,6 +396,16 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                Rectangle {
+                    height: 48px; border-radius: 10px; background: Theme.card;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px;
+                        spacing: 12px;
+                        Text { text: ui-language; color: Theme.fg; font-size: 14px; vertical-alignment: center; }
+                        Button { text: setting-language; clicked => { root.cycle-language(); } }
+                    }
+                }
+
                 Text { text: "Network"; color: Theme.fg; font-size: 13px; font-weight: 600; }
                 Rectangle {
                     height: 108px; border-radius: 10px; background: Theme.card;
@@ -467,7 +484,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Text { text: "About"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Text { text: ui-about; color: Theme.fg; font-size: 13px; font-weight: 600; }
                 Rectangle {
                     height: 132px; border-radius: 10px; background: Theme.card;
                     VerticalLayout {
@@ -675,16 +692,16 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         spacing: 8px;
                         Button {
-                            text: "Read (" + detail-pages + " pages)";
+                            text: ui-read + " (" + detail-pages + ")";
                             clicked => { root.open-reader(); }
                         }
                         Button {
-                            text: "Download";
+                            text: ui-download;
                             clicked => { root.download(); }
                         }
                     }
 
-                    Text { text: "Tags"; color: Theme.fg; font-size: 14px; font-weight: 600; }
+                    Text { text: ui-tags; color: Theme.fg; font-size: 14px; font-weight: 600; }
                     for tag-line in detail-tags : Text {
                         text: tag-line;
                         color: Theme.fg-dim;
@@ -719,7 +736,7 @@ export component AppWindow inherits Window {
                     }
 
                     if detail-comments.length > 0 : Text {
-                        text: "Comments";
+                        text: ui-comments;
                         color: Theme.fg;
                         font-size: 14px;
                         font-weight: 600;
@@ -771,7 +788,7 @@ export component AppWindow inherits Window {
                 padding-left: 4px;
                 padding-right: 4px;
                 spacing: 2px;
-                for tab[index] in ["Front", "Popular", "Rank", "Fav", "Watch", "History"] : Rectangle {
+                for tab[index] in tab-titles : Rectangle {
                     horizontal-stretch: 1;
                     background: index == current-tab ? Theme.accent : transparent;
                     border-radius: 8px;

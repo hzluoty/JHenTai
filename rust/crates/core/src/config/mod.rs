@@ -98,6 +98,7 @@ pub mod keys {
     pub const SEARCH_HISTORY: &str = "searchHistory";
     pub const BUILT_IN_BLOCKED_USER: &str = "builtInBlockedUser";
     pub const DISMISS_VERSION: &str = "dismissVersion";
+    pub const LANGUAGE: &str = "language";
     pub const GALLERY_IMAGE_HASH: &str = "galleryImageHash";
 }
 

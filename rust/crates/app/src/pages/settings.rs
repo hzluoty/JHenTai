@@ -20,6 +20,8 @@ pub struct SettingsState {
     pub security: SecuritySetting,
     /// 应用锁是否已解锁（进程生命周期内有效）
     pub unlocked: bool,
+    /// 界面语言
+    pub lang: crate::i18n::Lang,
 }
 
 impl crate::AppController {
@@ -41,6 +43,9 @@ impl crate::AppController {
             }
             if let Some(value) = jhentai_core::config::read_json::<SecuritySetting>(store.as_ref(), keys::SECURITY_SETTING) {
                 state.security = value;
+            }
+            if let Some(code) = jhentai_core::config::read_string(store.as_ref(), keys::LANGUAGE, "") {
+                state.lang = crate::i18n::Lang::from_code(&code);
             }
         }
         drop(state);
@@ -74,6 +79,22 @@ impl crate::AppController {
         self.window.set_setting_pin_enabled(state.security.is_locked_enabled());
         self.window.set_setting_persistent(self.store_is_persistent);
         self.window.set_setting_version(env!("CARGO_PKG_VERSION").into());
+        self.window.set_setting_language(state.lang.code().into());
+
+        // 底部 tab 文案跟着语言走
+        let titles: Vec<slint::SharedString> = ["frontPage", "popular", "ranklist", "favorite", "watched", "history"]
+            .iter()
+            .map(|key| crate::i18n::t(state.lang, key).into())
+            .collect();
+        self.window.set_tab_titles(Rc::new(slint::VecModel::from(titles)).into());
+        self.window.set_ui_read(crate::i18n::t(state.lang, "read").into());
+        self.window.set_ui_download(crate::i18n::t(state.lang, "download").into());
+        self.window.set_ui_back(crate::i18n::t(state.lang, "back").into());
+        self.window.set_ui_tags(crate::i18n::t(state.lang, "tags").into());
+        self.window.set_ui_comments(crate::i18n::t(state.lang, "comments").into());
+        self.window.set_ui_about(crate::i18n::t(state.lang, "about").into());
+        self.window.set_ui_settings(crate::i18n::t(state.lang, "settings").into());
+        self.window.set_ui_language(crate::i18n::t(state.lang, "language").into());
     }
 
     /// 站点切换（EH ↔ EX）
@@ -117,6 +138,21 @@ impl crate::AppController {
             }
         }
         self.persist(keys::NETWORK_SETTING, &self.settings.borrow().network);
+        self.apply_settings_to_ui();
+    }
+
+    /// 切换界面语言（6 种）
+    pub fn cycle_language(self: &Rc<Self>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.lang = state.lang.next();
+        }
+        {
+            let lang = self.settings.borrow().lang;
+            if let Ok(mut store) = self.store.lock() {
+                jhentai_core::config::write_string(store.as_mut(), keys::LANGUAGE, "", lang.code());
+            }
+        }
         self.apply_settings_to_ui();
     }
 
@@ -197,7 +233,9 @@ impl crate::AppController {
     /// 用当前设置重建 reqwest client（改代理/域前置后调用）
     pub fn rebuild_network(self: &Rc<Self>) {
         let network = self.settings.borrow().network.clone();
-        let options = jhentai_core::net::ClientOptions::from_setting(&network, None);
+        // 系统代理只能从平台层读（reqwest 在 Android 不会自己读）
+        let system_proxy = jhentai_core::net::normalize_proxy(self.platform.system_proxy());
+        let options = jhentai_core::net::ClientOptions::from_setting(&network, system_proxy.as_deref());
         if let Ok(mut net) = self.net.lock() {
             net.options = options.clone();
         }

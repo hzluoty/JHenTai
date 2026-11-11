@@ -44,9 +44,7 @@ fn run(app: slint::android::AndroidApp) -> Result<(), Box<dyn std::error::Error>
     let mut options = jhentai_core::net::ClientOptions::default();
     options.enable_domain_fronting = true;
     // 系统代理由 ConnectivityManager/settings 读，reqwest 不自动读
-    options.proxy = platform
-        .system_proxy()
-        .map(|proxy| if proxy.starts_with("http") { proxy } else { format!("http://{proxy}") });
+    options.proxy = jhentai_core::net::normalize_proxy(platform.system_proxy());
 
     let data_dir = platform.external_data_path();
     let controller = Rc::new(crate::AppController::new(options, Some(data_dir), platform.clone())?);
