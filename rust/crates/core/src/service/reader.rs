@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::image::{self, RgbaImage};
 use crate::model::GalleryImage;
-use crate::net::http::{get, get_bytes, Client};
+use crate::net::http::{get, Client};
 use crate::net::{FrontingResolver, NetState};
 use crate::parser::{self, ParseError};
 

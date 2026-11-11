@@ -2,6 +2,9 @@
 //!
 //! 定时器回调只能碰 Send 的东西（`AtomicBool`/`Arc<Mutex<..>>`），
 //! 真正的 Slint 模型修改都发生在 UI 线程。
+//!
+//! 例外：`nav::BACK_REQUESTED` 由 JNI 导出直接置位，因此留在 nav 模块，
+//! 但同样由这里的泵消费。新事件请加进 `UiEvents`，不要另开字段。
 
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +18,7 @@ pub struct UiEvents {
     pub covers: AtomicBool,
     pub details_thumbs: AtomicBool,
     pub reader: AtomicBool,
+    pub more_thumbs: AtomicBool,
 }
 
 impl UiEvents {
@@ -24,6 +28,14 @@ impl UiEvents {
 
     pub fn request_details_thumbs(&self) {
         self.details_thumbs.store(true, Ordering::Relaxed);
+    }
+
+    pub fn request_more_thumbs(&self) {
+        self.more_thumbs.store(true, Ordering::Relaxed);
+    }
+
+    pub fn take_more_thumbs(&self) -> bool {
+        self.more_thumbs.swap(false, Ordering::Relaxed)
     }
 
     pub fn request_reader(&self) {
@@ -59,7 +71,7 @@ pub fn start(timer: &Timer, controller: &Rc<crate::AppController>, interval: Dur
         if this.ui_events.take_reader() {
             this.drain_reader_pending();
         }
-        if this.more_thumbs_wanted.swap(false, Ordering::Relaxed) {
+        if this.ui_events.take_more_thumbs() {
             this.fetch_more_thumbnails();
         }
         // 返回键：Java 主线程只置标志，出栈必须在 UI 线程
@@ -88,5 +100,9 @@ mod tests {
         events.request_reader();
         assert!(events.take_reader());
         assert!(!events.take_reader());
+
+        events.request_more_thumbs();
+        assert!(events.take_more_thumbs());
+        assert!(!events.take_more_thumbs());
     }
 }

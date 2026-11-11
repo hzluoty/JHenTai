@@ -168,8 +168,6 @@ pub struct AppController {
     pub(crate) ui_events: Arc<crate::pages::pump::UiEvents>,
     /// UI 事件泵（页面级定时器都走它）
     pub(crate) ui_pump_timer: slint::Timer,
-    /// 详情页还有多页缩略图待补全
-    pub(crate) more_thumbs_wanted: Arc<std::sync::atomic::AtomicBool>,
     /// 阅读器状态（跨线程，只装 Send 数据）
     pub(crate) reader: Arc<Mutex<crate::pages::reader::ReaderState>>,
     /// 阅读器已解码的图片（只在 UI 线程读写）
@@ -209,7 +207,6 @@ impl AppController {
             nav: std::cell::RefCell::new(crate::nav::Navigator::new()),
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
-            more_thumbs_wanted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             reader: Arc::new(Mutex::new(crate::pages::reader::ReaderState::default())),
             reader_images: Rc::new(std::cell::RefCell::new(crate::pages::reader::ReaderImages::default())),
             store: Arc::new(Mutex::new(opened.store)),

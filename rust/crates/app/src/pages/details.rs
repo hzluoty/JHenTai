@@ -128,7 +128,7 @@ impl crate::AppController {
         let window_weak = self.window.as_weak();
         let details = self.details.clone();
         let ui_events = self.ui_events.clone();
-        let more_thumbs_wanted = self.more_thumbs_wanted.clone();
+
 
         self.runtime.spawn(async move {
             let parsed = match jhentai_core::net::get(&client, &net, &resolver, &url).await {
@@ -166,7 +166,7 @@ impl crate::AppController {
 
                         // 多页缩略图画廊：置标志，由 UI 泵发起补全（Rc 不能进闭包）
                         if need_more {
-                            more_thumbs_wanted.store(true, std::sync::atomic::Ordering::Relaxed);
+                            ui_events.request_more_thumbs();
                         }
                     }
                     Err(e) => window.set_detail_error(format!("{e}").into()),
@@ -191,7 +191,7 @@ impl crate::AppController {
         let details = self.details.clone();
         let window_weak = self.window.as_weak();
         let ui_events = self.ui_events.clone();
-        let more_thumbs_wanted = self.more_thumbs_wanted.clone();
+
         let gid = detail.gallery_url.gid;
 
         self.runtime.spawn(async move {
