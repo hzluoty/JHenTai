@@ -162,7 +162,24 @@ pub fn apply_page(state: &mut ListState, page: GalleryPageInfo) {
     state.galleries = page.galleries;
 }
 
-/// Rust 侧 controller：组合根（窗口 + 网络 + 页栈 + 各页状态）
+/// Rust 侧 controller：组合根（窗口 + 网络 + 页栈 + 各页状态）。
+///
+/// 字段 → owner 模块（新增字段前先看这里，避免继续线性膨胀）：
+///
+/// | 字段 | owner |
+/// |---|---|
+/// | `window` | `ui/app.slint` 全部页面 |
+/// | `net` / `client` / `resolver` | `core::net`，`pages/settings.rs` 负责热重建 |
+/// | `state` | `pages/gallery_list.rs`（列表页） |
+/// | `details` / `details_thumbs_*` | `pages/details.rs` |
+/// | `reader` / `reader_images` | `pages/reader.rs` |
+/// | `downloads` | `pages/downloads.rs` |
+/// | `settings` / `platform` / `store` / `store_is_persistent` | `pages/settings.rs` + `store.rs` |
+/// | `nav` | `nav.rs` |
+/// | `ui_events` / `ui_pump_timer` | `pages/pump.rs` |
+/// | `runtime` | 全局 tokio |
+///
+/// 下一步（M6 剩余）引入云同步/标签翻译时，应把各自状态收进独立 struct 并挂这里。
 pub struct AppController {
     pub(crate) window: AppWindow,
     pub(crate) net: Arc<Mutex<NetState>>,
@@ -490,7 +507,13 @@ impl AppController {
     pub fn load(self: &Rc<Self>, cursor: PageCursor) {
         let tab = self.state.lock().map(|g| g.tab).unwrap_or_default();
         // 站点设置：选了 EX 就用 EX 域名（cookie 里没 igneous 时 EX 会是空白页）
-        let is_ex = self.settings.borrow().eh.is_ex();
+        let want_ex = self.settings.borrow().eh.is_ex();
+        // 没登录就用 EX 会拿到空白页（缺 igneous）：退回 EH 并提示
+        let logged_in = self.net.lock().map(|n| n.cookies.has_logged_in()).unwrap_or(false);
+        let is_ex = want_ex && logged_in;
+        if want_ex && !logged_in {
+            self.window.set_error_text(crate::i18n::t(self.settings.borrow().lang, "exNeedsLogin").into());
+        }
         let url = tab.url_on(&cursor, is_ex);
         if url.is_empty() {
             self.window.set_galleries(Rc::new(slint::VecModel::from(Vec::<GalleryItem>::new())).into());

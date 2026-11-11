@@ -116,6 +116,15 @@ fn table(key: &str) -> Option<[&'static str; 6]> {
         ],
         "language" => ["Language", "语言", "語言", "언어", "Idioma", "Язык"],
         "total" => ["items", "项", "項", "개", "itens", "элементов"],
+        "exNeedsLogin" => [
+            "EX requires login - showing E-Hentai",
+            "EX 需要登录，已切换到 E-Hentai",
+            "EX 需要登入，已切換到 E-Hentai",
+            "EX는 로그인이 필요합니다 - E-Hentai로 표시",
+            "EX exige login - mostrando E-Hentai",
+            "EX требует входа — показан E-Hentai",
+        ],
+        "expunged" => ["EXPUNGED", "已删除", "已刪除", "삭제됨", "REMOVIDO", "УДАЛЕНО"],
         "done" => ["done", "已完成", "已完成", "완료", "concluído", "готово"],
         "failed" => ["failed", "失败", "失敗", "실패", "falhou", "ошибка"],
         "downloading" => ["downloading…", "下载中…", "下載中…", "다운로드 중…", "baixando…", "скачивание…"],
@@ -123,11 +132,14 @@ fn table(key: &str) -> Option<[&'static str; 6]> {
     })
 }
 
-/// 取一条文案；未收录时返回 key 本身（便于发现漏翻译）
-pub fn t(lang: Lang, key: &str) -> &'static str {
+/// 取一条文案；未收录时原样返回 key（便于发现漏翻译）。
+///
+/// 只接受 `&'static str`：miss 分支直接返回入参，不做任何分配
+/// （早期版本用 `Box::leak` 会有无上界内存泄漏）。
+pub fn t(lang: Lang, key: &'static str) -> &'static str {
     match table(key) {
         Some(row) => row[lang_index(lang)],
-        None => Box::leak(key.to_string().into_boxed_str()),
+        None => key,
     }
 }
 
@@ -161,6 +173,14 @@ mod tests {
         }
         assert_eq!(Lang::EnUs.next(), Lang::ZhCn);
         assert_eq!(Lang::RuRu.next(), Lang::EnUs, "循环回到英文");
+    }
+
+    #[test]
+    fn unknown_key_does_not_allocate() {
+        // miss 分支直接返回入参（曾因 Box::leak 泄漏内存）
+        let key = "definitelyNotAKey";
+        assert_eq!(t(Lang::EnUs, key), key);
+        assert!(std::ptr::eq(t(Lang::EnUs, key), key), "必须返回同一 'static 引用");
     }
 
     #[test]

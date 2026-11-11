@@ -95,6 +95,15 @@ impl crate::AppController {
         self.window.set_ui_about(crate::i18n::t(state.lang, "about").into());
         self.window.set_ui_settings(crate::i18n::t(state.lang, "settings").into());
         self.window.set_ui_language(crate::i18n::t(state.lang, "language").into());
+        self.window.set_ui_loading(crate::i18n::t(state.lang, "loading").into());
+        self.window.set_ui_retry(crate::i18n::t(state.lang, "retry").into());
+        self.window.set_ui_no_galleries(crate::i18n::t(state.lang, "noGalleries").into());
+        self.window.set_ui_no_downloads(crate::i18n::t(state.lang, "noDownloads").into());
+        self.window.set_ui_thumbnails(crate::i18n::t(state.lang, "thumbnails").into());
+        self.window.set_ui_sign_in(crate::i18n::t(state.lang, "signIn").into());
+        self.window.set_ui_sign_out(crate::i18n::t(state.lang, "signOut").into());
+        self.window.set_ui_expunged(crate::i18n::t(state.lang, "expunged").into());
+        self.window.set_ui_total_items(crate::i18n::t(state.lang, "total").into());
     }
 
     /// 站点切换（EH ↔ EX）

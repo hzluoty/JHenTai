@@ -12,6 +12,8 @@ pub struct EhSetting {
     /// "EH" 或 "EX"
     #[serde(default = "default_site")]
     pub site: String,
+    /// Dart 版的历史字段：登录后自动跳 EX。目前 Rust 版用显式站点选择，
+    /// 保留字段只为「读旧配置不报错」，不参与逻辑（写回时保持原值）。
     #[serde(rename = "redirect2Eh", default = "default_true")]
     pub redirect_2_eh: bool,
 }

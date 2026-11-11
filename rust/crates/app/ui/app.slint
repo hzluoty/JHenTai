@@ -215,6 +215,16 @@ export component AppWindow inherits Window {
     in-out property <string> ui-about: "About";
     in-out property <string> ui-settings: "Settings";
     in-out property <string> ui-language: "Language";
+    in-out property <string> ui-loading: "Loading…";
+    in-out property <string> ui-retry: "Retry";
+    in-out property <string> ui-no-galleries: "No galleries";
+    in-out property <string> ui-no-downloads: "No downloads yet";
+    in-out property <string> ui-thumbnails: "Thumbnails";
+    in-out property <string> ui-sign-in: "Sign in";
+    in-out property <string> ui-sign-out: "Sign out";
+    in-out property <string> ui-expunged: "EXPUNGED";
+    in-out property <string> ui-total-items: "items";
+    in-out property <string> ui-history-local: "History comes from the local database";
     callback cycle-language();
     in-out property <string> account-password: "";
     callback set-account-user(string);
@@ -301,7 +311,7 @@ export component AppWindow inherits Window {
                 spacing: 12px;
 
                 if loading : Text {
-                    text: "Loading…";
+                    text: ui-loading;
                     color: Theme.fg-dim;
                     horizontal-alignment: center;
                 }
@@ -315,13 +325,13 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
                     Button {
-                        text: "Retry";
+                        text: ui-retry;
                         clicked => { root.refresh(); }
                     }
                 }
 
                 if !loading && error-text == "" : Text {
-                    text: "No galleries";
+                    text: ui-no-galleries;
                     color: Theme.fg-dim;
                     horizontal-alignment: center;
                 }
@@ -366,11 +376,11 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             spacing: 8px;
                             if !account-logged-in : Button {
-                                text: "Sign in";
+                                text: ui-sign-in;
                                 clicked => { root.login(root.account-user, root.account-password); }
                             }
                             if account-logged-in : Button {
-                                text: "Sign out";
+                                text: ui-sign-out;
                                 clicked => { root.logout(); }
                             }
                             Text {
@@ -524,7 +534,7 @@ export component AppWindow inherits Window {
                 spacing: 8px;
                 padding: 12px;
                 if downloads.length == 0 : Text {
-                    text: "No downloads yet";
+                    text: ui-no-downloads;
                     color: Theme.fg-dim;
                     horizontal-alignment: center;
                 }
@@ -624,7 +634,7 @@ export component AppWindow inherits Window {
                 padding: 12px;
 
                 if detail-loading : Text {
-                    text: "Loading…";
+                    text: ui-loading;
                     color: Theme.fg-dim;
                     horizontal-alignment: center;
                 }
@@ -674,7 +684,7 @@ export component AppWindow inherits Window {
                             vertical-alignment: center;
                         }
                         if detail-expunged : Text {
-                            text: "EXPUNGED";
+                            text: ui-expunged;
                             color: Theme.danger;
                             font-size: 11px;
                             vertical-alignment: center;
@@ -710,7 +720,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: "Thumbnails (" + detail-thumbnail-pages + " pages)";
+                        text: ui-thumbnails + " (" + detail-thumbnail-pages + ")";
                         color: Theme.fg;
                         font-size: 14px;
                         font-weight: 600;
