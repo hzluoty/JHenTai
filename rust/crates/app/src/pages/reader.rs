@@ -293,6 +293,48 @@ impl crate::AppController {
         self.save_read_progress(index);
     }
 
+    /// 当前页的本地文件路径（在线模式需要先落盘缓存）
+    fn current_image_file(self: &Rc<Self>) -> Option<std::path::PathBuf> {
+        let (index, local) = {
+            let state = self.reader.lock().unwrap();
+            (state.index, state.local_files.get(state.index).cloned())
+        };
+        if let Some(path) = local {
+            return Some(path);
+        }
+
+        // 在线模式：把已解码的图片写到缓存目录再交给系统
+        let image = self.reader_images.borrow().images.get(&index).cloned()?;
+        let dir = self.cache_dir.lock().ok()?.clone();
+        let path = dir.join(format!("reader-{index}.png"));
+        // slint::Image → RGBA8 原始缓冲 → PNG
+        let buffer = image.to_rgba8()?;
+        let pixels: Vec<u8> = buffer.as_slice().iter().flat_map(|px| [px.r, px.g, px.b, px.a]).collect();
+        jhentai_core::image::RgbaImage::from_rgba(buffer.width(), buffer.height(), pixels)?
+            .save_png(&path)
+            .ok()?;
+        Some(path)
+    }
+
+    /// 保存当前页到相册
+    pub fn save_current_image(self: &Rc<Self>) {
+        let Some(path) = self.current_image_file() else {
+            self.window.set_reader_error("no image to save".into());
+            return;
+        };
+        let ok = self.platform.save_image_to_gallery(&path, "image/png");
+        self.window.set_reader_error(if ok { "saved to gallery".into() } else { "save failed".into() });
+    }
+
+    /// 分享当前页
+    pub fn share_current_image(self: &Rc<Self>) {
+        let Some(path) = self.current_image_file() else {
+            self.window.set_reader_error("no image to share".into());
+            return;
+        };
+        self.platform.share_file(&path, "image/png");
+    }
+
     /// 阅读进度写库（`local_config` 的 `readIndexRecord`）
     pub fn save_read_progress(self: &Rc<Self>, index: usize) {
         let gid = self.reader.lock().map(|s| s.gid).unwrap_or_default();

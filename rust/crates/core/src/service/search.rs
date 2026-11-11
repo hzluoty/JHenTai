@@ -71,7 +71,8 @@ pub fn search_url(search_type: SearchType, is_ex: bool, query: &GalleryQuery, pa
     if parts.is_empty() {
         base.to_string()
     } else {
-        format!("{base}?{}", parts.join("&"))
+        // E-H 对 `/?f_search=` 才不 302，`?f_search=` 会被重定向
+        format!("{}/?{}", base.trim_end_matches('/'), parts.join("&"))
     }
 }
 
@@ -140,7 +141,7 @@ mod tests {
     #[test]
     fn search_url_matches_dart_shape() {
         let query = GalleryQuery { keyword: Some("azur lane".into()), ..Default::default() };
-        assert_eq!(search_url(SearchType::Gallery, false, &query, 0), "https://e-hentai.org?f_search=azur%20lane");
+        assert_eq!(search_url(SearchType::Gallery, false, &query, 0), "https://e-hentai.org/?f_search=azur%20lane");
         assert!(search_url(SearchType::Gallery, true, &query, 3).ends_with("&page=3"));
         assert!(search_url(SearchType::Gallery, true, &query, 0).starts_with("https://exhentai.org"));
         assert_eq!(search_url(SearchType::Popular, false, &GalleryQuery::default(), 0), "https://e-hentai.org/popular");

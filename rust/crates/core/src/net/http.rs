@@ -139,6 +139,15 @@ pub fn build_client(state: &NetState, resolver: &FrontingResolver) -> Result<req
     builder.build().map_err(|e| RequestError::Network(e.to_string()))
 }
 
+/// 是否应当跟随这个 302。
+///
+/// E-H 用 302 做 URL 规范化（`?f_search=` → `/?f_search=`），这类要跟；
+/// 登录/封禁弹跳（`bounce_login.php`、`/login`）不能当内容页解析，一律不跟。
+fn should_follow_redirect(location: &str) -> bool {
+    let lowered = location.to_ascii_lowercase();
+    !lowered.contains("login") && !lowered.contains("bounce")
+}
+
 /// 校验 URL 可解析。域前置在 DNS 解析阶段由 `FrontingResolver` 处理，不改 URL。
 fn prepare(url: &str, _state: &NetState) -> Result<(), RequestError> {
     reqwest::Url::parse(url).map(|_| ()).map_err(|e| RequestError::Network(e.to_string()))
@@ -152,14 +161,36 @@ pub async fn get(client: &reqwest::Client, state: &Arc<Mutex<NetState>>, resolve
         resolver.set_enabled(guard.options.enable_domain_fronting);
     }
 
-    let cookie_header = state.lock().map(|g| g.cookies.header_value()).unwrap_or_default();
-    let mut request = client.get(url);
-    if !cookie_header.is_empty() {
-        request = request.header(reqwest::header::COOKIE, cookie_header);
-    }
+    // E-H 会用 302 做 URL 规范化（例如 `?f_search=` → `/?f_search=`）；
+    // 只跟同站、非登录跳转的重定向，登录/封禁页仍按错误处理。
+    let mut current = url.to_string();
+    for _ in 0..3 {
+        let cookie_header = state.lock().map(|g| g.cookies.header_value()).unwrap_or_default();
+        let mut request = client.get(&current);
+        if !cookie_header.is_empty() {
+            request = request.header(reqwest::header::COOKIE, cookie_header);
+        }
+        let response = request.send().await.map_err(|e| RequestError::Network(e.to_string()))?;
 
-    let response = request.send().await.map_err(|e| RequestError::Network(e.to_string()))?;
-    finish(response, state).await
+        if response.status().as_u16() == 302 {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            if let Some(location) = location {
+                if should_follow_redirect(&location) {
+                    current = absolute_url(&current, &location)?;
+                    continue;
+                }
+                // 登录/封禁跳转：返回 302 让调用方按业务错误处理
+                return finish(response, state).await;
+            }
+        }
+
+        return finish(response, state).await;
+    }
+    Err(RequestError::Network(format!("too many redirects: {url}")))
 }
 
 /// 下载二进制内容（图片、种子等）：只注入 cookie，不做业务正文校验。
@@ -204,10 +235,18 @@ pub async fn get_bytes_with_referer(
         let status = response.status().as_u16();
 
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
-            let location = response.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()).map(str::to_string);
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
             let Some(location) = location else {
                 return Err(RequestError::Network(format!("redirect {status} without Location")));
             };
+            if !should_follow_redirect(&location) {
+                // 登录/封禁跳转：别把 HTML 当图片存下来
+                return Ok((status, Vec::new()));
+            }
             current = absolute_url(&current, &location)?;
             continue;
         }
@@ -320,6 +359,17 @@ mod tests {
         let resolver = FrontingResolver::with_provider(state.ip_provider.clone());
         resolver.set_enabled(true);
         assert!(build_client(&state, &resolver).is_ok());
+    }
+
+    #[test]
+    fn redirect_policy_shared_by_page_and_bytes() {
+        // URL 规范化要跟
+        assert!(super::should_follow_redirect("/?f_search=azur"));
+        assert!(super::should_follow_redirect("https://e-hentai.org/g/1/aaaaaaaaaa/"));
+        // 登录/封禁跳转不跟
+        assert!(!super::should_follow_redirect("https://e-hentai.org/bounce_login.php?b=ds"));
+        assert!(!super::should_follow_redirect("/login.php"));
+        assert!(!super::should_follow_redirect("https://forums.e-hentai.org/index.php?act=Login"));
     }
 
     #[test]

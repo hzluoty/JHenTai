@@ -84,11 +84,12 @@ impl GalleryListSource for Tab {
     }
 
     fn url(&self, cursor: &PageCursor) -> String {
+        // 统一带 `/`：E-H 对 `?next=`（无路径）会先 302
         let suffix = match cursor {
-            PageCursor::First => String::new(),
-            PageCursor::Next(gid) => format!("?next={gid}"),
-            PageCursor::Prev(gid) => format!("?prev={gid}"),
-            PageCursor::Index(index) => format!("?p={index}"),
+            PageCursor::First => "/".to_string(),
+            PageCursor::Next(gid) => format!("/?next={gid}"),
+            PageCursor::Prev(gid) => format!("/?prev={gid}"),
+            PageCursor::Index(index) => format!("/?p={index}"),
         };
         match self {
             Self::Front => format!("{}{suffix}", consts::EH_INDEX),
@@ -152,6 +153,10 @@ pub struct ListState {
     pub galleries: Vec<jhentai_core::model::Gallery>,
     /// 已请求过封面的 gid（图片本身只存在 Slint 模型里，`slint::Image` 不是 Send）
     pub covers: std::collections::HashSet<i64>,
+    /// 当前搜索条件（None = 浏览模式）
+    pub query: Option<jhentai_core::net::GalleryQuery>,
+    /// 搜索历史（从 `local_config` 读）
+    pub history: Vec<String>,
 }
 
 /// 把解析结果写进状态（纯函数，便于测试）
@@ -170,7 +175,7 @@ pub fn apply_page(state: &mut ListState, page: GalleryPageInfo) {
 /// |---|---|
 /// | `window` | `ui/app.slint` 全部页面 |
 /// | `net` / `client` / `resolver` | `core::net`，`pages/settings.rs` 负责热重建 |
-/// | `state` | `pages/gallery_list.rs`（列表页） |
+/// | `state` | `pages/gallery_list.rs`（列表页）；`state.query/history` + 搜索方法在 `pages/search.rs`（`switch_tab` 会调 `refresh_search_ui`） |
 /// | `details` / `details_thumbs_*` | `pages/details.rs` |
 /// | `reader` / `reader_images` | `pages/reader.rs` |
 /// | `downloads` | `pages/downloads.rs` |
@@ -197,6 +202,8 @@ pub struct AppController {
     pub(crate) ui_pump_timer: slint::Timer,
     /// 平台能力（屏幕常亮/权限/分享等）
     pub(crate) platform: Arc<dyn jhentai_platform::Platform>,
+    /// 缓存目录（分享/保存图片时先落盘）
+    pub(crate) cache_dir: Arc<Mutex<std::path::PathBuf>>,
     /// 设置（UI 线程；持久化走 store）
     pub(crate) settings: std::cell::RefCell<crate::pages::settings::SettingsState>,
     /// 下载页状态（跨线程：只装 Send 数据）
@@ -247,6 +254,9 @@ impl AppController {
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
             platform,
+            cache_dir: Arc::new(Mutex::new(
+                data_dir.clone().unwrap_or_else(|| std::path::PathBuf::from("cache")).join("cache"),
+            )),
             settings: std::cell::RefCell::new(crate::pages::settings::SettingsState::default()),
             downloads: Arc::new(Mutex::new(crate::pages::downloads::DownloadsState {
                 download_path: download_dir.clone(),
@@ -432,6 +442,20 @@ impl AppController {
         });
 
         let weak = Rc::downgrade(self);
+        self.window.on_save_image(move || {
+            if let Some(this) = weak.upgrade() {
+                this.save_current_image();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_share_image(move || {
+            if let Some(this) = weak.upgrade() {
+                this.share_current_image();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
         self.window.on_open_reader(move || {
             if let Some(this) = weak.upgrade() {
                 this.open_reader();
@@ -482,20 +506,50 @@ impl AppController {
         });
 
         let weak = Rc::downgrade(self);
-        self.window.on_select_tab(move |index| {
+        self.window.on_search(move |keyword| {
             if let Some(this) = weak.upgrade() {
-                this.window.set_current_tab(index);
-                {
-                    let mut guard = this.state.lock().unwrap();
-                    guard.tab = Tab::from_index(index);
-                    guard.page_index = 0;
-                    guard.prev_gid = None;
-                    guard.next_gid = None;
-                    guard.covers.clear();
-                }
-                this.load_first_page();
+                this.start_search(keyword.to_string());
             }
         });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_clear_search(move || {
+            if let Some(this) = weak.upgrade() {
+                this.clear_search();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_pick_history(move |index| {
+            if let Some(this) = weak.upgrade() {
+                this.search_history(index);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_select_tab(move |index| {
+            if let Some(this) = weak.upgrade() {
+                this.switch_tab(index);
+            }
+        });
+    }
+
+    /// tab 切换：清掉搜索条件后回到浏览模式
+    pub fn switch_tab(self: &Rc<Self>, index: i32) {
+        let tab = Tab::from_index(index);
+        {
+            let mut state = self.state.lock().unwrap();
+            state.tab = tab;
+            state.query = None;
+            state.page_index = 0;
+            state.prev_gid = None;
+            state.next_gid = None;
+            state.covers.clear();
+        }
+        self.window.set_current_tab(index);
+        self.window.set_search_text("".into());
+        self.refresh_search_ui();
+        self.load(PageCursor::First);
     }
 
     /// 加载第一页
@@ -514,7 +568,30 @@ impl AppController {
         if want_ex && !logged_in {
             self.window.set_error_text(crate::i18n::t(self.settings.borrow().lang, "exNeedsLogin").into());
         }
-        let url = tab.url_on(&cursor, is_ex);
+        // 搜索模式用 core 的 search_url（f_search/f_cats 与 Dart 一致）；
+        // 搜索翻页是页码制，浏览翻页是 gid 游标制，显式分开。
+        let query = self.state.lock().ok().and_then(|s| s.query.clone());
+        let url = match query {
+            Some(mut query) => {
+                // 搜索结果页也是 gid 游标制（`?next=<gid>`），`page=N` 会被 E-H 忽略。
+                match &cursor {
+                    PageCursor::Next(gid) => query.next_gid = Some(gid.clone()),
+                    PageCursor::Prev(gid) => query.prev_gid = Some(gid.clone()),
+                    _ => {}
+                }
+                let page_index = match &cursor {
+                    PageCursor::Index(index) => *index,
+                    _ => 0,
+                };
+                jhentai_core::service::search::search_url(
+                    jhentai_core::service::search::SearchType::Gallery,
+                    is_ex,
+                    &query,
+                    page_index,
+                )
+            }
+            None => tab.url_on(&cursor, is_ex),
+        };
         if url.is_empty() {
             self.window.set_galleries(Rc::new(slint::VecModel::from(Vec::<GalleryItem>::new())).into());
             self.window.set_error_text("History comes from the local database (M2)".into());
@@ -554,7 +631,8 @@ impl AppController {
                             guard.page_index = match &cursor_for_state {
                                 PageCursor::Index(index) => *index,
                                 PageCursor::First => 0,
-                                _ => guard.page_index + 1,
+                                PageCursor::Next(_) => guard.page_index + 1,
+                                PageCursor::Prev(_) => guard.page_index.saturating_sub(1),
                             };
                             guard.covers.clear();
                             apply_page(&mut guard, page);
@@ -663,10 +741,10 @@ mod tests {
 
     #[test]
     fn tab_urls() {
-        assert_eq!(Tab::Front.url(&PageCursor::First), "https://e-hentai.org");
-        assert_eq!(Tab::Front.url(&PageCursor::Next("1234".into())), "https://e-hentai.org?next=1234");
-        assert_eq!(Tab::Front.url(&PageCursor::Prev("99".into())), "https://e-hentai.org?prev=99");
-        assert_eq!(Tab::Front.url(&PageCursor::Index(2)), "https://e-hentai.org?p=2");
+        assert_eq!(Tab::Front.url(&PageCursor::First), "https://e-hentai.org/");
+        assert_eq!(Tab::Front.url(&PageCursor::Next("1234".into())), "https://e-hentai.org/?next=1234");
+        assert_eq!(Tab::Front.url(&PageCursor::Prev("99".into())), "https://e-hentai.org/?prev=99");
+        assert_eq!(Tab::Front.url(&PageCursor::Index(2)), "https://e-hentai.org/?p=2");
         assert_eq!(Tab::Ranklist.url(&PageCursor::Index(1)), "https://e-hentai.org/toplist.php?tl=15&p=1");
         assert_eq!(Tab::Popular.url(&PageCursor::Next("1".into())), "https://e-hentai.org/popular", "热门页不可翻页");
         assert!(Tab::History.url(&PageCursor::First).is_empty());

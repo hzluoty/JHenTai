@@ -61,6 +61,23 @@ pub fn scale_to(image: DynamicImage, max_width: u32) -> RgbaImage {
     RgbaImage { width: rgba.width(), height: rgba.height(), pixels: rgba.into_raw() }
 }
 
+impl RgbaImage {
+    /// 写成 PNG（分享/保存到相册前落盘用）
+    pub fn save_png(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let buffer = image::RgbaImage::from_raw(self.width, self.height, self.pixels.clone())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad rgba buffer"))?;
+        buffer.save_with_format(path, ImageFormat::Png).map_err(|e| std::io::Error::other(e.to_string()))
+    }
+
+    /// 从 `&[u8]` 原始 RGBA 构造
+    pub fn from_rgba(width: u32, height: u32, pixels: Vec<u8>) -> Option<Self> {
+        (pixels.len() == (width as usize) * (height as usize) * 4).then_some(Self { width, height, pixels })
+    }
+}
+
 /// 阅读器用：按屏幕宽度降采样，`max_pixels` 防止超大图爆内存
 pub fn decode_for_reader(bytes: &[u8], screen_width: u32) -> Result<RgbaImage, ImageError> {
     let image = image::load_from_memory(bytes).map_err(|e| ImageError::Decode(e.to_string()))?;
