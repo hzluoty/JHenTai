@@ -37,6 +37,8 @@ fn page_specific_widgets_are_still_wired() {
         "share-image()",
         "open-settings()",
         "open-downloads()",
+        "suggestions :",        // 标签联想列表
+        "pick-suggestion(",
     ] {
         assert!(src.contains(needle), "app.slint 缺少接线：{needle}");
     }

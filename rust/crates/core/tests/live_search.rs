@@ -64,3 +64,18 @@ async fn search_pagination_uses_gid_cursor() {
         "E-H 忽略 page 参数，这正是不能用页码翻页的原因"
     );
 }
+
+/// 标签联想走 `api.php` 的 JSON POST（form 编码会被拒）
+#[tokio::test]
+#[ignore = "需要真实网络"]
+async fn tag_suggest_returns_tags() {
+    let state: Arc<Mutex<NetState>> = NetState::shared(options());
+    let resolver = FrontingResolver::new();
+    let client = build_client(&state.lock().unwrap(), &resolver).unwrap();
+
+    let tags = jhentai_core::service::search::tag_suggest(&client, &state, &resolver, "sole")
+        .await
+        .expect("联想接口应返回数据");
+    assert!(!tags.is_empty(), "sole 应有联想结果");
+    assert!(tags.iter().any(|t| t.namespace == "female" && t.key == "sole female"));
+}

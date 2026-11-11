@@ -234,6 +234,9 @@ export component AppWindow inherits Window {
     in-out property <string> search-text: "";
     in-out property <bool> searching: false;
     in-out property <[string]> search-history: [];
+    in-out property <[string]> suggestions: [];
+    callback suggest(string);
+    callback pick-suggestion(int);
     callback search(string);
     callback clear-search();
     callback pick-history(int);
@@ -296,6 +299,8 @@ export component AppWindow inherits Window {
                     font-size: 18px;
                     font-weight: 600;
                     vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
                 }
 
                 HorizontalLayout {
@@ -324,7 +329,7 @@ export component AppWindow inherits Window {
 
         // 搜索栏（仅列表页）
         if page == 0 : Rectangle {
-            height: search-history.length > 0 && !searching ? 84px : 52px;
+            height: (suggestions.length > 0 || (search-history.length > 0 && !searching)) ? 84px : 52px;
             background: Theme.bg;
             VerticalLayout {
                 padding-left: 8px;
@@ -336,7 +341,7 @@ export component AppWindow inherits Window {
                     LineEdit {
                         text: search-text;
                         placeholder-text: "search keyword / tags";
-                        edited(text) => { root.search-text = text; }
+                        edited(text) => { root.search-text = text; root.suggest(text); }
                         accepted(text) => { root.search(text); }
                     }
                     Button {
@@ -345,6 +350,13 @@ export component AppWindow inherits Window {
                             if (root.searching) { root.clear-search(); }
                             else { root.search(root.search-text); }
                         }
+                    }
+                }
+                if suggestions.length > 0 : HorizontalLayout {
+                    spacing: 6px;
+                    for item[index] in suggestions : Button {
+                        text: item;
+                        clicked => { root.pick-suggestion(index); }
                     }
                 }
                 if search-history.length > 0 && !searching : HorizontalLayout {

@@ -4,7 +4,7 @@
 
 use crate::config::{keys, ConfigStore};
 use crate::net::{GalleryQuery, RanklistType};
-use crate::net::{consts, urlencode};
+use crate::net::consts;
 
 /// 搜索类型（决定落在哪个页面）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,9 +128,21 @@ pub fn save_quick_search(store: &mut dyn ConfigStore, items: &[(String, String)]
     }
 }
 
-/// 标签联想 URL（E-H 的 tag suggest API）
-pub fn tag_suggestion_url(keyword: &str) -> String {
-    format!("https://e-hentai.org/tag/suggest.php?q={}", urlencode(keyword))
+/// 标签联想：POST 到 `api.php`，`method=tagsuggest&text=<keyword>`（与 Dart 版一致）。
+///
+/// 注意不是 `tag/suggest.php`——那个路径返回的是普通 HTML 页面。
+pub async fn tag_suggest(
+    client: &crate::net::http::Client,
+    state: &std::sync::Arc<std::sync::Mutex<crate::net::NetState>>,
+    resolver: &crate::net::FrontingResolver,
+    keyword: &str,
+) -> Result<Vec<crate::model::EhRawTag>, String> {
+    // api.php 只接受 JSON body（form 编码会得到 Invalid JSON Request）
+    let body = serde_json::json!({ "method": "tagsuggest", "text": keyword });
+    let response = crate::net::http::post_json(client, state, resolver, consts::EH_API, &body)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(crate::parser::tag_suggestion(&response.body))
 }
 
 #[cfg(test)]
@@ -177,7 +189,8 @@ mod tests {
     }
 
     #[test]
-    fn tag_suggestion_url_encodes() {
-        assert_eq!(tag_suggestion_url("sole female"), "https://e-hentai.org/tag/suggest.php?q=sole%20female");
+    fn suggest_endpoint_is_the_api_post() {
+        // 联想走 api.php 的 POST（Dart 的 requestTagSuggestion 同样如此）
+        assert!(consts::EH_API.ends_with("/api.php"));
     }
 }

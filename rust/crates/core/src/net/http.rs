@@ -293,6 +293,28 @@ pub async fn post_form(
     finish(response, state).await
 }
 
+/// 发送 JSON POST（E-H 的 api.php 只接受 JSON body）。
+pub async fn post_json(
+    client: &reqwest::Client,
+    state: &Arc<Mutex<NetState>>,
+    resolver: &FrontingResolver,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<RawResponse, RequestError> {
+    {
+        let guard = state.lock().map_err(|e| RequestError::Network(e.to_string()))?;
+        prepare(url, &guard)?;
+        resolver.set_enabled(guard.options.enable_domain_fronting);
+    }
+    let cookie_header = state.lock().map(|g| g.cookies.header_value()).unwrap_or_default();
+    let mut request = client.post(url).json(body);
+    if !cookie_header.is_empty() {
+        request = request.header(reqwest::header::COOKIE, cookie_header);
+    }
+    let response = request.send().await.map_err(|e| RequestError::Network(e.to_string()))?;
+    finish(response, state).await
+}
+
 async fn finish(response: reqwest::Response, state: &Arc<Mutex<NetState>>) -> Result<RawResponse, RequestError> {
     let status = response.status().as_u16();
     let location = response.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()).map(str::to_string);

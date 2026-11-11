@@ -176,12 +176,13 @@ pub fn apply_page(state: &mut ListState, page: GalleryPageInfo) {
 /// | `window` | `ui/app.slint` 全部页面 |
 /// | `net` / `client` / `resolver` | `core::net`，`pages/settings.rs` 负责热重建 |
 /// | `state` | `pages/gallery_list.rs`（列表页）；`state.query/history` + 搜索方法在 `pages/search.rs`（`switch_tab` 会调 `refresh_search_ui`） |
-/// | `details` / `details_thumbs_*` | `pages/details.rs` |
-/// | `reader` / `reader_images` | `pages/reader.rs` |
+/// | `details` | `pages/details.rs` |
+/// | `reader` / `reader_images` / `cache_dir` / `auto_turn` | `pages/reader.rs`（`auto_turn_enabled` 由设置页开关） |
 /// | `downloads` | `pages/downloads.rs` |
 /// | `settings` / `platform` / `store` / `store_is_persistent` | `pages/settings.rs` + `store.rs` |
 /// | `nav` | `nav.rs` |
 /// | `ui_events` / `ui_pump_timer` | `pages/pump.rs` |
+/// | `suggestion_input` | `pages/search.rs`（标签联想防抖） |
 /// | `runtime` | 全局 tokio |
 ///
 /// 下一步（M6 剩余）引入云同步/标签翻译时，应把各自状态收进独立 struct 并挂这里。
@@ -202,6 +203,8 @@ pub struct AppController {
     pub(crate) ui_pump_timer: slint::Timer,
     /// 平台能力（屏幕常亮/权限/分享等）
     pub(crate) platform: Arc<dyn jhentai_platform::Platform>,
+    /// 标签联想的最新输入（防抖：sleep 后比对，变了就放弃这次请求）
+    pub(crate) suggestion_input: Arc<Mutex<String>>,
     /// 自动翻页：上次翻页时刻 + 是否启用（仅阅读页有效）
     pub(crate) auto_turn: Arc<Mutex<Option<std::time::Instant>>>,
     pub(crate) auto_turn_enabled: std::cell::Cell<bool>,
@@ -257,6 +260,7 @@ impl AppController {
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
             platform,
+            suggestion_input: Arc::new(Mutex::new(String::new())),
             auto_turn: Arc::new(Mutex::new(None)),
             auto_turn_enabled: std::cell::Cell::new(false),
             cache_dir: Arc::new(Mutex::new(
@@ -535,6 +539,20 @@ impl AppController {
         self.window.on_search(move |keyword| {
             if let Some(this) = weak.upgrade() {
                 this.start_search(keyword.to_string());
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_suggest(move |text| {
+            if let Some(this) = weak.upgrade() {
+                this.request_tag_suggestion(text.to_string());
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_pick_suggestion(move |index| {
+            if let Some(this) = weak.upgrade() {
+                this.apply_suggestion(index);
             }
         });
 
