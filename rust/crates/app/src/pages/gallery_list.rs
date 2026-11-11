@@ -183,6 +183,7 @@ pub fn apply_page(state: &mut ListState, page: GalleryPageInfo) {
 /// | `nav` | `nav.rs` |
 /// | `ui_events` / `ui_pump_timer` | `pages/pump.rs` |
 /// | `suggestion_input` | `pages/search.rs`（标签联想防抖） |
+/// | `block_rules` / `db_path` | `pages/settings.rs`（规则 CRUD 走 `core::service::block_rule`） |
 /// | `runtime` | 全局 tokio |
 ///
 /// 下一步（M6 剩余）引入云同步/标签翻译时，应把各自状态收进独立 struct 并挂这里。
@@ -203,6 +204,10 @@ pub struct AppController {
     pub(crate) ui_pump_timer: slint::Timer,
     /// 平台能力（屏幕常亮/权限/分享等）
     pub(crate) platform: Arc<dyn jhentai_platform::Platform>,
+    /// 本地屏蔽规则（从 `block_rule` 表加载；列表渲染前过滤）
+    pub(crate) block_rules: Arc<Mutex<jhentai_core::service::block_rule::BlockRuleSet>>,
+    /// db.sqlite 路径（屏蔽规则需要单独连接）
+    pub(crate) db_path: Option<std::path::PathBuf>,
     /// 标签联想的最新输入（防抖：sleep 后比对，变了就放弃这次请求）
     pub(crate) suggestion_input: Arc<Mutex<String>>,
     /// 自动翻页：上次翻页时刻 + 是否启用（仅阅读页有效）
@@ -260,6 +265,8 @@ impl AppController {
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
             platform,
+            block_rules: Arc::new(Mutex::new(Default::default())),
+            db_path: opened.db_path.clone(),
             suggestion_input: Arc::new(Mutex::new(String::new())),
             auto_turn: Arc::new(Mutex::new(None)),
             auto_turn_enabled: std::cell::Cell::new(false),
@@ -380,6 +387,20 @@ impl AppController {
         self.window.on_toggle_domain_fronting(move || {
             if let Some(this) = weak.upgrade() {
                 this.toggle_domain_fronting();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_add_block_rule(move |keyword| {
+            if let Some(this) = weak.upgrade() {
+                this.add_block_rule(keyword.to_string());
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_delete_block_rule(move |index| {
+            if let Some(this) = weak.upgrade() {
+                this.delete_block_rule(index);
             }
         });
 
@@ -653,6 +674,7 @@ impl AppController {
         let window_weak = self.window.as_weak();
         let ui_events = self.ui_events.clone();
         let cursor_for_state = cursor.clone();
+        let block_rules_clone = self.block_rules.clone();
 
         self.runtime.spawn(async move {
             let parsed = match get(&client, &net, &resolver, &url).await {
@@ -667,8 +689,21 @@ impl AppController {
                 window.set_loading(false);
                 match parsed {
                     Ok(page) => {
-                        let items: Vec<GalleryItem> = page.galleries.iter().map(gallery_to_item).collect();
+                        // 屏蔽规则：命中规则的分镜不进 UI（一次加锁，空集时跳过匹配）
+                        let galleries: Vec<_> = {
+                            let set = block_rules_clone.lock().unwrap();
+                            if set.is_empty() {
+                                page.galleries.clone()
+                            } else {
+                                page.galleries.iter().filter(|g| !set.blocks_gallery(g)).cloned().collect()
+                            }
+                        };
+                        let items: Vec<GalleryItem> = galleries.iter().map(gallery_to_item).collect();
                         let count = items.len();
+                        // 关键顺序：先把 page.galleries 换成过滤后的列表，apply_page 才会把同一份
+                        // 数据写进 state —— 否则 UI 行号与 state.galleries 错位，点卡片会打开别的画廊。
+                        let mut page = page;
+                        page.galleries = galleries;
                         let (can_next, can_prev, shown_index) = {
                             let mut guard = state.lock().unwrap();
                             // 游标翻页没有页码，用 +1 近似（只影响页码显示）

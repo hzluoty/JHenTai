@@ -3,6 +3,7 @@
 //! 所有服务都只依赖 core 内的 net/db/config/parser，不碰 UI 与平台 API。
 
 pub mod account;
+pub mod block_rule;
 pub mod favorite;
 pub mod history;
 pub mod read_progress;

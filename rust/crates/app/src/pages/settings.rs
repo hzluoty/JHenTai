@@ -363,6 +363,86 @@ impl crate::AppController {
     }
 }
 
+impl crate::AppController {
+    /// 新增一条「标题包含」屏蔽规则
+    pub fn add_block_rule(self: &Rc<Self>, keyword: String) {
+        let keyword = keyword.trim().to_string();
+        if keyword.is_empty() {
+            return;
+        }
+        let Some(path) = self.db_path.clone() else {
+            return;
+        };
+        let Ok(conn) = jhentai_core::db::open(&path) else {
+            return;
+        };
+        let rule = jhentai_core::service::block_rule::BlockRule {
+            group_id: "default".into(),
+            target: jhentai_core::service::block_rule::BlockTarget::Gallery,
+            attribute: jhentai_core::service::block_rule::BlockAttribute::Title,
+            pattern: jhentai_core::service::block_rule::BlockPattern::Contain,
+            expression: keyword,
+        };
+        if jhentai_core::service::block_rule::insert_rule(&conn, &rule).is_ok() {
+            drop(conn);
+            self.load_block_rules();
+            self.refresh_block_rules_ui();
+        }
+    }
+
+    /// 删除第 index 条规则（按设置页展示顺序）
+    pub fn delete_block_rule(self: &Rc<Self>, index: i32) {
+        let Some(path) = self.db_path.clone() else {
+            return;
+        };
+        let Ok(conn) = jhentai_core::db::open(&path) else {
+            return;
+        };
+        let Ok(rules) = jhentai_core::service::block_rule::all_rules(&conn) else {
+            return;
+        };
+        let Some(stored) = rules.get(index.max(0) as usize) else {
+            return;
+        };
+        if jhentai_core::service::block_rule::delete_rule(&conn, stored.id).is_ok() {
+            drop(conn);
+            self.load_block_rules();
+            self.refresh_block_rules_ui();
+        }
+    }
+
+    /// 规则列表同步到 UI
+    pub fn refresh_block_rules_ui(self: &Rc<Self>) {
+        let Some(path) = self.db_path.clone() else {
+            self.window.set_block_rules(Rc::new(slint::VecModel::from(Vec::<slint::SharedString>::new())).into());
+            return;
+        };
+        let items: Vec<slint::SharedString> = jhentai_core::db::open(&path)
+            .ok()
+            .and_then(|conn| jhentai_core::service::block_rule::all_rules(&conn).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|stored| jhentai_core::service::block_rule::describe(&stored.rule).into())
+            .collect();
+        self.window.set_block_rules(Rc::new(slint::VecModel::from(items)).into());
+    }
+
+    /// 从 `block_rule` 表加载屏蔽规则（启动时与规则编辑后调用）
+    pub fn load_block_rules(self: &Rc<Self>) {
+        let Some(path) = self.db_path.clone() else {
+            return;
+        };
+        let rules = match jhentai_core::db::open(&path) {
+            Ok(conn) => jhentai_core::service::block_rule::load_rules(&conn).unwrap_or_default(),
+            Err(_) => return,
+        };
+        if let Ok(mut slot) = self.block_rules.lock() {
+            *slot = rules;
+        }
+        self.refresh_block_rules_ui();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
