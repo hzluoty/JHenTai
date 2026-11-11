@@ -91,3 +91,27 @@ fn detail_tag_namespace_and_key() {
     assert_eq!(other[0].tag_data.key, "ai generated");
     assert_eq!(other[0].tag_data.full(), "other:ai generated");
 }
+
+#[test]
+fn image_page_fields() {
+    let image = image_page_image(&fixture("image_page.html")).expect("图片页应解析成功");
+    assert!(image.url.starts_with("https://"), "直链: {}", image.url);
+    assert!(image.url.contains(".webp") || image.url.contains(".jpg") || image.url.contains(".png"));
+    assert_eq!(image.width, Some(800.0));
+    assert_eq!(image.height, Some(547.0));
+    assert!(image.reload_key.is_some());
+    assert_eq!(image.image_hash.as_deref().map(str::len), Some(40), "sha1 hash");
+    // fullimg 原图链接（匿名访问会 302 到登录页，仅用于「下载原图」）
+    assert!(image.original_image_url.as_deref().unwrap_or_default().contains("/fullimg/"));
+
+    let gallery = image_page_gallery_url(&fixture("image_page.html")).expect("图片页应有画廊链接");
+    assert_eq!(gallery.gid, 4321294);
+}
+
+#[test]
+fn multi_page_detail_fixture_is_parsed_once() {
+    // 单页画廊：thumbnails_page_count 为 1，避免阅读器走多页补全分支
+    let result = detail_page(&fixture("gallery_detail.html")).unwrap();
+    assert_eq!(result.detail.thumbnails_page_count, 1);
+    assert!(!result.detail.thumbnails.is_empty());
+}
