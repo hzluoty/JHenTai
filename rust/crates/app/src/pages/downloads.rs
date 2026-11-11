@@ -125,11 +125,7 @@ impl crate::AppController {
 
     /// 扫描下载目录，把磁盘上已有的画廊列出来（本地画廊）
     pub fn scan_downloads(self: &Rc<Self>) {
-        let (path, total_by_dir) = {
-            let state = self.downloads.lock().unwrap();
-            (state.download_path.clone(), ())
-        };
-        let _ = total_by_dir;
+        let path = self.downloads.lock().unwrap().download_path.clone();
 
         let mut state = self.downloads.lock().unwrap();
         for (gid, dir) in scan_gallery_directories(&path) {

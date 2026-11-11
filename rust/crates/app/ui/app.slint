@@ -139,7 +139,8 @@ export global Theme {
 export component AppWindow inherits Window {
     // 默认给状态栏留位（Android 上 Slint 不自动 inset），否则顶栏按钮会被状态栏吞掉点击
     in-out property <length> safe-area-top: 24px;
-    in-out property <length> safe-area-bottom: 0px;
+    // 底部手势区也给一点内边距，否则阅读器工具条按钮点不到
+    in-out property <length> safe-area-bottom: 48px;
 
     title: "JHenTai";
     background: Theme.bg;
@@ -281,6 +282,8 @@ export component AppWindow inherits Window {
                     text: "‹ " + ui-back;
                     clicked => { root.back(); }
                 }
+                if page == 2 : Button { text: "save"; clicked => { root.save-image(); } }
+                if page == 2 : Button { text: "share"; clicked => { root.share-image(); } }
                 if page == 0 : Text {
                     text: tab-titles[current-tab];
                     color: Theme.fg;
@@ -793,21 +796,14 @@ export component AppWindow inherits Window {
 
                 // 底部工具条
                 Rectangle {
-                    height: 44px;
+                    height: 28px;
                     background: #000000cc;
-                    HorizontalLayout {
-                        spacing: 10px;
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        alignment: center;
-                        Text {
-                            text: (reader-index + 1) + " / " + reader-total;
-                            color: #ffffff;
-                            font-size: 13px;
-                            vertical-alignment: center;
-                        }
-                        Button { text: "save"; clicked => { root.save-image(); } }
-                        Button { text: "share"; clicked => { root.share-image(); } }
+                    Text {
+                        text: (reader-index + 1) + " / " + reader-total;
+                        color: #ffffff;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }

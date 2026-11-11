@@ -293,46 +293,90 @@ impl crate::AppController {
         self.save_read_progress(index);
     }
 
-    /// 当前页的本地文件路径（在线模式需要先落盘缓存）
-    fn current_image_file(self: &Rc<Self>) -> Option<std::path::PathBuf> {
-        let (index, local) = {
-            let state = self.reader.lock().unwrap();
-            (state.index, state.local_files.get(state.index).cloned())
-        };
-        if let Some(path) = local {
-            return Some(path);
-        }
-
-        // 在线模式：把已解码的图片写到缓存目录再交给系统
+    /// 当前页的 RGBA 像素（UI 线程只做拷贝，编码交给阻塞线程池）
+    fn current_image_pixels(self: &Rc<Self>) -> Option<(Vec<u8>, u32, u32)> {
+        let index = self.reader.lock().ok()?.index;
         let image = self.reader_images.borrow().images.get(&index).cloned()?;
-        let dir = self.cache_dir.lock().ok()?.clone();
-        let path = dir.join(format!("reader-{index}.png"));
-        // slint::Image → RGBA8 原始缓冲 → PNG
         let buffer = image.to_rgba8()?;
+        let (width, height) = (buffer.width(), buffer.height());
         let pixels: Vec<u8> = buffer.as_slice().iter().flat_map(|px| [px.r, px.g, px.b, px.a]).collect();
-        jhentai_core::image::RgbaImage::from_rgba(buffer.width(), buffer.height(), pixels)?
-            .save_png(&path)
-            .ok()?;
-        Some(path)
+        Some((pixels, width, height))
     }
 
-    /// 保存当前页到相册
+    /// 保存当前页到相册。
+    ///
+    /// PNG 编码是大图 CPU 活（~2160px 宽），放 `spawn_blocking`，UI 线程只做
+    /// `slint::Image → RgbaImage` 的拷贝。
     pub fn save_current_image(self: &Rc<Self>) {
-        let Some(path) = self.current_image_file() else {
-            self.window.set_reader_error("no image to save".into());
-            return;
+        let (bytes, width, height) = match self.current_image_pixels() {
+            Some(v) => v,
+            None => {
+                self.window.set_reader_error("no image to save".into());
+                return;
+            }
         };
-        let ok = self.platform.save_image_to_gallery(&path, "image/png");
-        self.window.set_reader_error(if ok { "saved to gallery".into() } else { "save failed".into() });
+        let platform = self.platform.clone();
+        let cache_dir = self.cache_dir.lock().unwrap().clone();
+        let window_weak = self.window.as_weak();
+        let index = self.reader.lock().map(|s| s.index).unwrap_or(0);
+
+        self.runtime.spawn(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let path = cache_dir.join(format!("reader-{}.png", index));
+                jhentai_core::image::RgbaImage::from_rgba(width, height, bytes)
+                    .and_then(|image| image.save_png(&path).ok().map(|_| path))
+                    .map(|path| platform.save_image_to_gallery(&path, "image/png"))
+            })
+            .await
+            .ok()
+            .flatten();
+
+            let message = if result == Some(true) { "saved to gallery" } else { "save failed" };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = window_weak.upgrade() {
+                    window.set_reader_error(message.into());
+                }
+            });
+        });
     }
 
-    /// 分享当前页
+    /// 分享当前页（本地文件直接分享，在线页先落盘）
     pub fn share_current_image(self: &Rc<Self>) {
-        let Some(path) = self.current_image_file() else {
+        if let Some(path) = self.reader.lock().ok().and_then(|s| s.local_files.get(s.index).cloned()) {
+            self.platform.share_file(&path, "image/png");
+            return;
+        }
+        // 在线页：编码落盘后再分享
+        let Some((bytes, width, height)) = self.current_image_pixels() else {
             self.window.set_reader_error("no image to share".into());
             return;
         };
-        self.platform.share_file(&path, "image/png");
+        let platform = self.platform.clone();
+        let cache_dir = self.cache_dir.lock().unwrap().clone();
+        let window_weak = self.window.as_weak();
+        let index = self.reader.lock().map(|s| s.index).unwrap_or(0);
+
+        self.runtime.spawn(async move {
+            let path = tokio::task::spawn_blocking(move || {
+                let path = cache_dir.join(format!("reader-{}.png", index));
+                jhentai_core::image::RgbaImage::from_rgba(width, height, bytes)
+                    .and_then(|image| image.save_png(&path).ok().map(|_| path))
+            })
+            .await
+            .ok()
+            .flatten();
+
+            match path {
+                Some(path) => platform.share_file(&path, "image/png"),
+                None => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(window) = window_weak.upgrade() {
+                            window.set_reader_error("share failed".into());
+                        }
+                    });
+                }
+            }
+        });
     }
 
     /// 阅读进度写库（`local_config` 的 `readIndexRecord`）
