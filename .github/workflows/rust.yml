@@ -1,0 +1,54 @@
+name: rust
+
+on:
+  push:
+    paths: ['rust/**', 'docs/rust-rewrite-plan.md', '.github/workflows/rust.yml']
+  pull_request:
+    paths: ['rust/**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      # 金样测试与解析器测试只需要 host 工具链
+      - run: cargo test --workspace --all-targets
+        working-directory: rust
+
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "ndk;27.3.13750724" "build-tools;35.0.0" "platforms;android-36"
+      - uses: taiki-e/install-action@cargo-ndk
+      - name: Build arm64 .so
+        working-directory: rust
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.3.13750724
+        run: |
+          export ANDROID_JAR="$ANDROID_HOME/platforms/android-36/android.jar"
+          export ANDROID_D8_JAR="$ANDROID_HOME/build-tools/35.0.0/lib/d8.jar"
+          cargo ndk -t arm64-v8a -P 24 -o crates/app/android/app/src/main/jniLibs build --release -p jhentai
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Assemble APK
+        working-directory: rust/crates/app/android
+        run: gradle --no-daemon assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jhentai-rust-arm64
+          path: rust/crates/app/android/app/build/outputs/apk/release/*.apk

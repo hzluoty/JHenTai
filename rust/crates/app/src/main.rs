@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let controller = std::rc::Rc::new(jhentai::AppController::new(options)?);
     controller.wire_callbacks();
     controller.window().set_current_tab(0);
-    controller.load_page(0);
+    controller.load_first_page();
 
     eprintln!("JHenTai {} ({})", platform.app_version(), platform.device_info());
     controller.run()?;

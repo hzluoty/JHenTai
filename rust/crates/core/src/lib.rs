@@ -8,5 +8,6 @@ pub mod image;
 pub mod model;
 pub mod net;
 pub mod parser;
+pub mod service;
 
 pub use model::*;

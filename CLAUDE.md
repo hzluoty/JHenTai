@@ -2,9 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Rust rewrite (in progress)
+
+A pure-Android arm64 rewrite lives in `rust/` — see `rust/README.md` (build/test/APK commands,
+cross-thread rules) and `docs/rust-rewrite-plan.md` (milestones, scope) plus `rust/UPSTREAM.md`
+(deliberate differences from this Flutter code). The Flutter code below stays the reference
+implementation until M7.
+
 ## Project overview
 
-JHenTai is a Flutter app for browsing E-Hentai / EXHentai, targeting Android, iOS, Windows, macOS, and Linux. Version `8.0.14+328` (from pubspec.yaml).
+JHenTai is a Flutter app for browsing E-Hentai / EXHentai, targeting Android, iOS, Windows, macOS, and Linux. Version `8.0.18+345` (from pubspec.yaml).
 
 ## Build & dev commands
 
@@ -97,12 +104,12 @@ Parsers for HTML responses live in `lib/src/utils/eh_spider_parser.dart`.
 
 ### Database (`lib/src/database/`)
 
-Drift (SQLite) at schema version 24 with heavy migration chain. Tables in `database/table/`, DAOs in `database/dao/`. The global `appDb` singleton is declared at the bottom of `database.dart`. Generated code is in `database.g.dart` — re-run `dart run build_runner build` after any schema change and add a migration step in `MigrationStrategy.onUpgrade`.
+Drift (SQLite) at schema version 25 with heavy migration chain. Tables in `database/table/`, DAOs in `database/dao/`. The global `appDb` singleton is declared at the bottom of `database.dart`. Generated code is in `database.g.dart` — re-run `dart run build_runner build` after any schema change and add a migration step in `MigrationStrategy.onUpgrade`.
 
 ### Services (`lib/src/service/`)
 
 Independent singletons that manage core features:
-- `gallery_download_service.dart` / `archive_download_service.dart` — download engine with parallel queue, resume, priority
+- `service/gallery_download/` (7 files) and `archive_download_service.dart` — download engine with parallel queue, resume, priority
 - `tag_translation_service.dart` — fetches and caches tag translations from EhTagTranslation
 - `local_block_rule_service.dart` — user-configured gallery blocking rules
 - `cloud_service.dart` — config sync

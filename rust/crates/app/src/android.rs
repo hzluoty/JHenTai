@@ -4,6 +4,20 @@ use std::rc::Rc;
 
 use jhentai_platform::Platform;
 
+/// Kotlin 壳的返回键回调：能出栈时消费按键，把出栈请求交给 UI 线程。
+#[no_mangle]
+pub extern "system" fn Java_top_jtmonster_jhentai_MainActivity_nativeOnBack(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jboolean {
+    if crate::nav::NAV_DEPTH.load(std::sync::atomic::Ordering::Relaxed) > 1 {
+        crate::nav::BACK_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+        1
+    } else {
+        0
+    }
+}
+
 /// Slint 的 Android 后端入口（`android-activity` crate 约定）
 #[no_mangle]
 pub fn android_main(app: slint::android::AndroidApp) {
@@ -36,7 +50,7 @@ fn run(app: slint::android::AndroidApp) -> Result<(), Box<dyn std::error::Error>
 
     let controller = Rc::new(crate::AppController::new(options)?);
     controller.wire_callbacks();
-    controller.load_page(0);
+    controller.load_first_page();
     controller.run()?;
     Ok(())
 }

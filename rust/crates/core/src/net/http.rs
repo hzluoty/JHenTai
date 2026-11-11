@@ -289,7 +289,8 @@ mod tests {
         provider.add_unavailable_ip("e-hentai.org", "172.66.132.196");
         let resolver = FrontingResolver::with_provider(Arc::new(Mutex::new(provider)));
 
-        let name: Name = "e-hentai.org".parse().unwrap();
+        // 关闭时走系统解析（用 localhost，避免测试环境没有 DNS）
+        let name: Name = "localhost".parse().unwrap();
         assert!(!resolver.resolve(name).await.unwrap().collect::<Vec<_>>().is_empty(), "关闭时走系统解析");
 
         resolver.set_enabled(true);
@@ -300,7 +301,7 @@ mod tests {
         assert_eq!(addrs[0].port(), 443);
 
         // 池外的 host 仍走系统解析，不会被前置影响
-        let name: Name = "example.com".parse().unwrap();
+        let name: Name = "localhost".parse().unwrap();
         assert!(!resolver.resolve(name).await.unwrap().collect::<Vec<_>>().is_empty());
     }
 

@@ -1,8 +1,6 @@
 //! 真实站点冒烟测试。默认忽略；用环境变量开关：
 //! `LIVE_EH=1 HTTPS_PROXY=http://127.0.0.1:10808 cargo test --test live_network -- --ignored`
 
-use std::sync::{Arc, Mutex};
-
 use jhentai_core::net::*;
 
 fn options() -> ClientOptions {

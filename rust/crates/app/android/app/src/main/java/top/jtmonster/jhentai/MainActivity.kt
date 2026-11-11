@@ -6,6 +6,7 @@ package top.jtmonster.jhentai
 
 import android.app.NativeActivity
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
 
 class MainActivity : NativeActivity() {
@@ -24,11 +25,26 @@ class MainActivity : NativeActivity() {
             )
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // 返回键先给 Rust 的页栈；栈底时交回系统（退出应用）
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP && nativeOnBack()) return true
+            // 按下事件也吞掉，避免漏给原生后端
+            // 按下事件一律吞掉，避免漏给原生后端
+            if (event.action == KeyEvent.ACTION_DOWN) return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     companion object {
         init {
             System.loadLibrary("jhentai")
         }
-        // shortcut: 音量键翻页在 M4 阅读器落地时再接（dispatchKeyEvent + JNI 回调），
-        // 现在不声明无实现的 external 函数，避免按键触发 UnsatisfiedLinkError。
+        /** 返回 true 表示 Rust 侧已出栈，按键被消费 */
+        @JvmStatic
+        external fun nativeOnBack(): Boolean
+
+
+        // shortcut: 音量键翻页在 M4 阅读器落地时再接（dispatchKeyEvent + JNI 回调）
     }
 }

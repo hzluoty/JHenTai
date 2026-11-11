@@ -135,10 +135,10 @@ fn call_void(name: &str, sig: &str, args: &[JValue]) {
     });
 }
 
-fn with_java_string(s: &str, f: impl FnOnce(&mut JNIEnv, JObject)) -> Option<()> {
-    with_env(|env, _| {
+fn with_java_string(s: &str, f: impl FnOnce(&mut JNIEnv, JClass, JObject)) -> Option<()> {
+    with_env(|env, class| {
         let jstr = env.new_string(s).ok()?;
-        f(env, JObject::from(jstr));
+        f(env, class, JObject::from(jstr));
         Some(())
     })
 }
@@ -181,10 +181,8 @@ impl Platform for AndroidPlatform {
     }
 
     fn set_clipboard(&self, text: &str) {
-        with_java_string(text, |env, jtext| {
-            if let Ok(class) = env.find_class(BRIDGE) {
-                let _ = env.call_static_method(class, "setClipboard", "(Ljava/lang/String;)V", &[JValue::Object(&jtext)]);
-            }
+        with_java_string(text, |env, class, jtext| {
+            let _ = env.call_static_method(class, "setClipboard", "(Ljava/lang/String;)V", &[JValue::Object(&jtext)]);
         });
     }
 
@@ -193,10 +191,8 @@ impl Platform for AndroidPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        with_java_string(url, |env, jurl| {
-            if let Ok(class) = env.find_class(BRIDGE) {
-                let _ = env.call_static_method(class, "openUrl", "(Ljava/lang/String;)V", &[JValue::Object(&jurl)]);
-            }
+        with_java_string(url, |env, class, jurl| {
+            let _ = env.call_static_method(class, "openUrl", "(Ljava/lang/String;)V", &[JValue::Object(&jurl)]);
         });
     }
 

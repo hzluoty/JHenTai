@@ -60,10 +60,6 @@ pub(crate) fn doc(html: &str) -> Html {
     Html::parse_document(html)
 }
 
-fn text_html(html: &str) -> String {
-    doc(html).root_element().text().collect::<Vec<_>>().join("")
-}
-
 pub(crate) fn text(e: ElementRef) -> String {
     e.text().collect::<Vec<_>>().join("")
 }
@@ -82,10 +78,6 @@ pub(crate) fn all<'a>(root: &'a Html, css: &str) -> Vec<ElementRef<'a>> {
 }
 
 pub(crate) fn parse_i64(s: &str) -> Option<i64> {
-    s.trim().replace(',', "").parse().ok()
-}
-
-fn parse_f64(s: &str) -> Option<f64> {
     s.trim().replace(',', "").parse().ok()
 }
 

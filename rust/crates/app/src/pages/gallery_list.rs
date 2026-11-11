@@ -16,10 +16,20 @@ use jhentai_core::parser;
 use crate::{AppWindow, GalleryItem};
 
 /// 列表页的数据源
+/// 翻页游标。E-H 的首页/收藏页只认 `next=<gid>` / `prev=<gid>`，
+/// 排行页用 `p=<index>`，热门页不可翻页。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageCursor {
+    First,
+    Next(String),
+    Prev(String),
+    Index(i64),
+}
+
 pub trait GalleryListSource {
     fn name(&self) -> &'static str;
-    /// 页面 URL（首页/热门/排行/收藏…）；空串表示数据来自本地
-    fn url(&self, page_index: i64) -> String;
+    /// 页面 URL；空串表示数据来自本地（历史页）
+    fn url(&self, cursor: &PageCursor) -> String;
 }
 
 /// 首页 / 热门 / 排行 / 收藏 / 关注 / 历史
@@ -63,24 +73,21 @@ impl GalleryListSource for Tab {
         }
     }
 
-    fn url(&self, page_index: i64) -> String {
+    fn url(&self, cursor: &PageCursor) -> String {
+        let suffix = match cursor {
+            PageCursor::First => String::new(),
+            PageCursor::Next(gid) => format!("?next={gid}"),
+            PageCursor::Prev(gid) => format!("?prev={gid}"),
+            PageCursor::Index(index) => format!("?p={index}"),
+        };
         match self {
-            Self::Front => {
-                if page_index == 0 {
-                    consts::EH_INDEX.to_string()
-                } else {
-                    format!("{}?page={page_index}", consts::EH_INDEX)
-                }
-            }
+            Self::Front => format!("{}{suffix}", consts::EH_INDEX),
             Self::Popular => consts::EH_POPULAR.to_string(),
-            Self::Ranklist => format!("{}?tl=15&p={page_index}", consts::EH_RANKLIST),
-            Self::Favorite => {
-                if page_index == 0 {
-                    consts::EH_FAVORITE.to_string()
-                } else {
-                    format!("{}?page={page_index}", consts::EH_FAVORITE)
-                }
-            }
+            Self::Ranklist => match cursor {
+                PageCursor::Index(index) => format!("{}?tl=15&p={index}", consts::EH_RANKLIST),
+                _ => format!("{}?tl=15", consts::EH_RANKLIST),
+            },
+            Self::Favorite => format!("{}{suffix}", consts::EH_FAVORITE),
             Self::Watched => consts::EH_WATCHED.to_string(),
             // 历史页读本地数据库
             Self::History => String::new(),
@@ -124,15 +131,6 @@ pub fn gallery_to_item(gallery: &jhentai_core::model::Gallery) -> GalleryItem {
     }
 }
 
-/// 把解码后的位图转成 Slint 图片
-pub fn to_slint_image(image: jhentai_core::image::RgbaImage) -> slint::Image {
-    slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-        &image.pixels,
-        image.width,
-        image.height,
-    ))
-}
-
 /// 列表页状态
 #[derive(Debug, Default)]
 pub struct ListState {
@@ -156,27 +154,32 @@ pub fn apply_page(state: &mut ListState, page: GalleryPageInfo) {
 
 /// Rust 侧 controller：持有 Slint window 与网络状态
 pub struct AppController {
-    window: AppWindow,
-    net: Arc<Mutex<NetState>>,
-    client: Client,
-    resolver: FrontingResolver,
-    state: Arc<Mutex<ListState>>,
+    pub(crate) window: AppWindow,
+    pub(crate) net: Arc<Mutex<NetState>>,
+    pub(crate) client: Client,
+    pub(crate) resolver: FrontingResolver,
+    /// 列表页状态
+    pub(crate) state: Arc<Mutex<ListState>>,
+    /// 详情页状态
+    pub(crate) details: Arc<Mutex<crate::pages::details::DetailsState>>,
     /// 页栈：替代 GetX 的 57 条路由
     pub nav: std::cell::RefCell<crate::nav::Navigator>,
-    /// 有新列表需要加载封面时置位，由 UI 线程上的定时器消费
-    covers_wanted: Arc<std::sync::atomic::AtomicBool>,
-    covers_timer: slint::Timer,
-    runtime: tokio::runtime::Runtime,
+    /// 跨线程 UI 事件（封面 / 详情缩略图）
+    pub(crate) ui_events: Arc<crate::pages::pump::UiEvents>,
+    /// UI 事件泵（页面级定时器都走它）
+    pub(crate) ui_pump_timer: slint::Timer,
+    pub(crate) runtime: tokio::runtime::Runtime,
 }
 
 impl AppController {
     pub fn new(options: ClientOptions) -> Result<Self, String> {
         let window = AppWindow::new().map_err(|e| e.to_string())?;
         let net = NetState::shared(options);
-        let resolver = FrontingResolver::new();
-        let client = {
+        let (resolver, client) = {
             let guard = net.lock().map_err(|e| e.to_string())?;
-            build_client(&guard, &resolver).map_err(|e| e.to_string())?
+            let resolver = FrontingResolver::with_provider(guard.ip_provider.clone());
+            let client = build_client(&guard, &resolver).map_err(|e| e.to_string())?;
+            (resolver, client)
         };
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -190,9 +193,10 @@ impl AppController {
             client,
             resolver,
             state: Arc::new(Mutex::new(ListState::default())),
+            details: Arc::new(Mutex::new(crate::pages::details::DetailsState::default())),
             nav: std::cell::RefCell::new(crate::nav::Navigator::new()),
-            covers_wanted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            covers_timer: slint::Timer::default(),
+            ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
+            ui_pump_timer: slint::Timer::default(),
             runtime,
         })
     }
@@ -203,50 +207,63 @@ impl AppController {
 
     /// 绑定 UI 回调。网络结果用 `invoke_from_event_loop` 回推 UI 线程。
     pub fn wire_callbacks(self: &Rc<Self>) {
-        // 封面加载泵：UI 线程上轮询标志位，Rc 不跨线程
-        {
-            let weak = Rc::downgrade(self);
-            self.covers_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(150), move || {
-                if let Some(this) = weak.upgrade() {
-                    if this.covers_wanted.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                        this.load_covers();
-                    }
-                }
-            });
-        }
+        crate::pages::pump::start(&self.ui_pump_timer, self, std::time::Duration::from_millis(120));
 
         // 点击卡片压栈到详情页（M4 接详情 UI，这里先保证交互不静默）
         let weak = Rc::downgrade(self);
         self.window.on_open_gallery(move |index| {
             if let Some(this) = weak.upgrade() {
-                let page = this.state.lock().map(|g| g.galleries.get(index as usize).map(|gallery| (gallery.gid(), gallery.token().to_string()))).ok().flatten();
-                if let Some((gid, token)) = page {
-                    this.nav.borrow_mut().push(crate::nav::Page::Details { gid, token });
+                let target = this
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.galleries.get(index as usize).map(|gallery| (gallery.gid(), gallery.token().to_string(), gallery.gallery_url.is_eh)));
+                if let Some((gid, token, is_eh)) = target {
+                    this.open_details(gid, token, !is_eh);
                 }
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_back(move || {
+            if let Some(this) = weak.upgrade() {
+                this.go_back();
             }
         });
 
         let weak = Rc::downgrade(self);
         self.window.on_refresh(move || {
             if let Some(this) = weak.upgrade() {
-                let page = this.state.lock().unwrap().page_index;
-                this.load_page(page);
+                this.load_first_page();
             }
         });
 
+        // 翻页用 E-H 返回的 next/prev gid；排行页没有 gid，退回页码
         let weak = Rc::downgrade(self);
         self.window.on_next_page(move || {
             if let Some(this) = weak.upgrade() {
-                let page = this.state.lock().unwrap().page_index + 1;
-                this.load_page(page);
+                let cursor = {
+                    let guard = this.state.lock().unwrap();
+                    match &guard.next_gid {
+                        Some(gid) => PageCursor::Next(gid.clone()),
+                        None => PageCursor::Index(guard.page_index + 1),
+                    }
+                };
+                this.load(cursor);
             }
         });
 
         let weak = Rc::downgrade(self);
         self.window.on_prev_page(move || {
             if let Some(this) = weak.upgrade() {
-                let page = (this.state.lock().unwrap().page_index - 1).max(0);
-                this.load_page(page);
+                let cursor = {
+                    let guard = this.state.lock().unwrap();
+                    match &guard.prev_gid {
+                        Some(gid) => PageCursor::Prev(gid.clone()),
+                        None => PageCursor::Index((guard.page_index - 1).max(0)),
+                    }
+                };
+                this.load(cursor);
             }
         });
 
@@ -258,16 +275,24 @@ impl AppController {
                     let mut guard = this.state.lock().unwrap();
                     guard.tab = Tab::from_index(index);
                     guard.page_index = 0;
+                    guard.prev_gid = None;
+                    guard.next_gid = None;
+                    guard.covers.clear();
                 }
-                this.load_page(0);
+                this.load_first_page();
             }
         });
     }
 
-    /// 加载某一页（异步，结果回 UI 线程）
-    pub fn load_page(self: &Rc<Self>, page_index: i64) {
+    /// 加载第一页
+    pub fn load_first_page(self: &Rc<Self>) {
+        self.load(PageCursor::First);
+    }
+
+    /// 按游标加载（异步，结果回 UI 线程）
+    pub fn load(self: &Rc<Self>, cursor: PageCursor) {
         let tab = self.state.lock().map(|g| g.tab).unwrap_or_default();
-        let url = tab.url(page_index);
+        let url = tab.url(&cursor);
         if url.is_empty() {
             self.window.set_galleries(Rc::new(slint::VecModel::from(Vec::<GalleryItem>::new())).into());
             self.window.set_error_text("History comes from the local database (M2)".into());
@@ -283,7 +308,8 @@ impl AppController {
         let resolver = self.resolver.clone();
         let state = self.state.clone();
         let window_weak = self.window.as_weak();
-        let covers_wanted = self.covers_wanted.clone();
+        let ui_events = self.ui_events.clone();
+        let cursor_for_state = cursor.clone();
 
         self.runtime.spawn(async move {
             let parsed = match get(&client, &net, &resolver, &url).await {
@@ -300,21 +326,26 @@ impl AppController {
                     Ok(page) => {
                         let items: Vec<GalleryItem> = page.galleries.iter().map(gallery_to_item).collect();
                         let count = items.len();
-                        let (can_next, can_prev) = {
+                        let (can_next, can_prev, shown_index) = {
                             let mut guard = state.lock().unwrap();
-                            guard.page_index = page_index;
+                            // 游标翻页没有页码，用 +1 近似（只影响页码显示）
+                            guard.page_index = match &cursor_for_state {
+                                PageCursor::Index(index) => *index,
+                                PageCursor::First => 0,
+                                _ => guard.page_index + 1,
+                            };
                             guard.covers.clear();
                             apply_page(&mut guard, page);
-                            (guard.next_gid.is_some(), guard.prev_gid.is_some() || page_index > 0)
+                            (guard.next_gid.is_some(), guard.prev_gid.is_some() || guard.page_index > 0, guard.page_index)
                         };
                         window.set_galleries(Rc::new(slint::VecModel::from(items)).into());
-                        window.set_page_index(page_index as i32);
+                        window.set_page_index(shown_index as i32);
                         window.set_can_go_next(can_next);
                         window.set_can_go_prev(can_prev);
                         window.set_total_text(format!("{count} items").into());
 
                         // 封面加载由 UI 线程上的定时器接手（Rc 不能跨线程）
-                        covers_wanted.store(true, std::sync::atomic::Ordering::Relaxed);
+                        ui_events.request_covers();
                     }
                     Err(e) => {
                         window.set_galleries(Rc::new(slint::VecModel::from(Vec::<GalleryItem>::new())).into());
@@ -331,7 +362,7 @@ impl AppController {
     /// 解码在 tokio 线程池，`slint::Image` 只在 UI 线程构造。
     pub fn load_covers(self: &Rc<Self>) {
         const COVER_BATCH: usize = 24;
-        const MAX_WIDTH: u32 = 128;
+        const MAX_WIDTH: u32 = crate::pages::cover_loader::COVER_WIDTH;
 
         let pending: Vec<(usize, i64, String)> = {
             let mut guard = self.state.lock().unwrap();
@@ -352,25 +383,26 @@ impl AppController {
             return;
         }
 
-        for (index, _gid, url) in pending {
+        for (_index, gid, url) in pending {
             if url.is_empty() {
                 continue;
             }
             let net = self.net.clone();
             let client = self.client.clone();
             let resolver = self.resolver.clone();
+            let state = self.state.clone();
             let window_weak = self.window.as_weak();
 
             self.runtime.spawn(async move {
-                let Ok((status, bytes)) = get_bytes(&client, &net, &resolver, &url).await else {
-                    return;
+                // 失败要回滚标记，否则这一条永远不再重试
+                let failure = |state: &Arc<Mutex<ListState>>| {
+                    state.lock().unwrap().covers.remove(&gid);
                 };
-                if status != 200 {
-                    return;
-                }
-                // 解码放在阻塞线程池，避免卡住 UI 之外的 async worker
-                let decoded = tokio::task::spawn_blocking(move || jhentai_core::image::decode(&bytes, MAX_WIDTH)).await.ok().and_then(|r| r.ok());
-                let Some(decoded) = decoded else {
+
+                let Some(decoded) =
+                    crate::pages::cover_loader::fetch_image(&client, &net, &resolver, &url, MAX_WIDTH).await
+                else {
+                    failure(&state);
                     return;
                 };
 
@@ -378,13 +410,16 @@ impl AppController {
                     let Some(window) = window_weak.upgrade() else {
                         return;
                     };
-                    let image = to_slint_image(decoded);
-                    // 回填：索引不变（该批加载期间列表不重排）
+                    let image = crate::pages::cover_loader::to_slint_image(decoded);
+                    // 回填：按 gid 找行，切页/切 tab 后旧结果不会画到错误的行上
                     let values = window.get_galleries();
-                    if let Some(row) = Model::row_data(&values, index) {
-                        let mut updated = row;
-                        updated.cover = image;
-                        Model::set_row_data(&values, index, updated);
+                    let target = (0..Model::row_count(&values))
+                        .find(|row| Model::row_data(&values, *row).map(|item| item.gid).unwrap_or_default() == gid as i32);
+                    if let Some(row) = target {
+                        if let Some(mut updated) = Model::row_data(&values, row) {
+                            updated.cover = image;
+                            Model::set_row_data(&values, row, updated);
+                        }
                     }
                 });
             });
@@ -406,10 +441,13 @@ mod tests {
 
     #[test]
     fn tab_urls() {
-        assert_eq!(Tab::Front.url(0), "https://e-hentai.org");
-        assert_eq!(Tab::Front.url(2), "https://e-hentai.org?page=2");
-        assert_eq!(Tab::Ranklist.url(1), "https://e-hentai.org/toplist.php?tl=15&p=1");
-        assert!(Tab::History.url(0).is_empty());
+        assert_eq!(Tab::Front.url(&PageCursor::First), "https://e-hentai.org");
+        assert_eq!(Tab::Front.url(&PageCursor::Next("1234".into())), "https://e-hentai.org?next=1234");
+        assert_eq!(Tab::Front.url(&PageCursor::Prev("99".into())), "https://e-hentai.org?prev=99");
+        assert_eq!(Tab::Front.url(&PageCursor::Index(2)), "https://e-hentai.org?p=2");
+        assert_eq!(Tab::Ranklist.url(&PageCursor::Index(1)), "https://e-hentai.org/toplist.php?tl=15&p=1");
+        assert_eq!(Tab::Popular.url(&PageCursor::Next("1".into())), "https://e-hentai.org/popular", "热门页不可翻页");
+        assert!(Tab::History.url(&PageCursor::First).is_empty());
     }
 
     #[test]

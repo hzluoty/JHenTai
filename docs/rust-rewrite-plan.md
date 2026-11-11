@@ -252,3 +252,21 @@ rust/
 2. 打 tag `flutter-final`，修正 CLAUDE.md 的过时内容
 3. 搭 `rust/` workspace、Gradle 壳和 CI
 4. 完成 4 项 spike，写 spike 报告（fps、内存、启动时间、APK 体积，附录屏），据此在 Slint 和方案 B 之间二选一
+
+## 9. 实施进度（滚动更新）
+
+代码在 `rust/`，说明见 `rust/README.md`，与 Flutter 版的差异见 `rust/UPSTREAM.md`。
+
+| 里程碑 | 状态 | 已完成 | 待办 |
+|---|---|---|---|
+| M0 | ✅ | 工具链（NDK r27c / cargo-ndk / JDK21 / Gradle 8.14）、host 测试、arm64+x86_64 .so、APK、模拟器冒烟（列表/详情/封面/返回键/代理） | 真机 fps 与冷启动测量、`setup-android.ps1` |
+| M1 | ✅ | model 全套、`eh_spider_parser` 全量移植、金样测试（真实页面 fixture）、reqwest 客户端、cookie 管理、域前置（自定义 DNS）、代理、509/封禁/Cloudflare 错误映射、live 冒烟测试 | 归档 bot、搜索建议的完整字段 |
+| M2 | 🟡 | db v25 接管（含备份/版本双拒绝）、`local_config` 读写、NetworkSetting、账号登录/导入/登出、阅读进度、历史表、搜索历史/快速搜索 | 其余 12 个 setting struct、标签翻译服务、屏蔽规则引擎、`local_config` 全量往返测试 |
+| M3 | 🟡 | Navigator + 返回键、6 tab 列表、卡片、封面管线、游标翻页、详情页（标签/缩略图/评论预览）、主题配色 | 搜索 UI 与标签联想、登录页与 WebView、3 种卡片样式、瀑布流、下拉刷新、评论交互 |
+| M4 | ⬜ | — | 阅读器 4 种布局、ZoomableImage、音量键、自动翻页、亮度/常亮、保存分享 |
+| M5 | ⬜ | — | 画廊/归档/本地三类下载、前台服务、metadata 互通、离线阅读 |
+| M6 | ⬜ | — | 设置页全量、安全（PIN/生物识别/防截屏）、云同步、6 语言 i18n |
+| M7 | ⬜ | — | 覆盖安装演练、性能回归、删除 Flutter 代码、README/CLAUDE.md 重写、发布 |
+
+当前测试：`cargo test --workspace` 9 个测试套件全绿（core 41 项 + 金样 6 项 + app 9 项），
+`live_network` 2 项默认 ignore，需要真实网络/代理时手动启用。
