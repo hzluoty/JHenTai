@@ -142,9 +142,7 @@ impl crate::AppController {
         if self.settings.borrow().read.keep_screen_awake_when_reading {
             self.platform.set_keep_screen_on(true);
         }
-        // 自动翻页：进入阅读页重置计时（是否启用由设置页控制）
-        self.auto_turn_enabled
-            .set(self.settings.borrow().read.auto_mode_interval > 0.0 && self.auto_turn_enabled.get());
+        // 自动翻页：进入阅读页重置计时（启用与否由设置页的开关决定）
         *self.auto_turn.lock().unwrap() = Some(std::time::Instant::now());
 
         let page = crate::nav::Page::Read { gid };

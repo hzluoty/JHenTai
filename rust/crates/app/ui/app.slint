@@ -257,6 +257,7 @@ export component AppWindow inherits Window {
     callback unlock(string);
     callback open-settings();
     callback download();
+    callback toggle-favorite();
     callback open-downloads();
     callback open-local-gallery(int);
     callback reader-step(int);
@@ -404,19 +405,20 @@ export component AppWindow inherits Window {
                 spacing: 10px;
                 padding: 12px;
 
-                if detail-loading : Text {
+                if detail-loading && detail-title == "" : Text {
                     text: ui-loading;
                     color: Theme.fg-dim;
                     horizontal-alignment: center;
                 }
 
-                if !detail-loading && detail-error != "" : Text {
+                // 操作反馈（收藏失败等）单独一行，不能把已加载的详情页整体挤掉
+                if detail-error != "" : Text {
                     text: detail-error;
                     color: Theme.danger;
                     wrap: word-wrap;
                 }
 
-                if !detail-loading && detail-error == "" : VerticalLayout {
+                if detail-title != "" : VerticalLayout {
                     spacing: 8px;
 
                     Text {
@@ -480,6 +482,10 @@ export component AppWindow inherits Window {
                         Button {
                             text: ui-download;
                             clicked => { root.download(); }
+                        }
+                        Button {
+                            text: detail-is-favorite ? "★" : "☆";
+                            clicked => { root.toggle-favorite(); }
                         }
                     }
 

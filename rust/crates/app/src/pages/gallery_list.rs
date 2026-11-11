@@ -437,6 +437,13 @@ impl AppController {
         });
 
         let weak = Rc::downgrade(self);
+        self.window.on_toggle_favorite(move || {
+            if let Some(this) = weak.upgrade() {
+                this.toggle_favorite();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
         self.window.on_download(move || {
             if let Some(this) = weak.upgrade() {
                 this.start_download();

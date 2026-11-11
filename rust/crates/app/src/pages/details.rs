@@ -296,6 +296,72 @@ impl crate::AppController {
         }
     }
 
+    /// 加入 / 移除收藏（UI 线程调用）。未登录时提示去设置页登录。
+    pub fn toggle_favorite(self: &Rc<Self>) {
+        let (gid, token, is_ex, currently_favorite) = {
+            let guard = self.details.lock().unwrap();
+            let Some(detail) = guard.detail.as_ref() else {
+                return;
+            };
+            (
+                detail.gallery_url.gid,
+                detail.gallery_url.token.clone(),
+                !detail.gallery_url.is_eh,
+                detail.is_favorite(),
+            )
+        };
+
+        let action = if currently_favorite {
+            jhentai_core::service::favorite::FavoriteAction::Remove
+        } else {
+            jhentai_core::service::favorite::FavoriteAction::Add { slot: 0, note: String::new() }
+        };
+
+        self.window.set_detail_error("".into());
+        let client = self.client.lock().unwrap().clone();
+        let net = self.net.clone();
+        let resolver = self.resolver.clone();
+        let details = self.details.clone();
+        let window_weak = self.window.as_weak();
+
+        self.runtime.spawn(async move {
+            let result = jhentai_core::service::favorite::apply(&client, &net, &resolver, is_ex, gid, &token, action.clone()).await;
+            let message = match &result {
+                Ok(()) => String::new(),
+                Err(e) => e.to_string(),
+            };
+            let ok = result.is_ok();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = window_weak.upgrade() else {
+                    return;
+                };
+                if !ok {
+                    window.set_detail_error(message.into());
+                    return;
+                }
+                // 更新本地状态：加收藏写字数索引 0，移除清空
+                if let Ok(mut guard) = details.lock() {
+                    if let Some(detail) = guard.detail.as_mut() {
+                        match action {
+                            jhentai_core::service::favorite::FavoriteAction::Add { .. } => {
+                                detail.favorite_tag_index = Some(0);
+                                detail.favorite_tag_name.get_or_insert_with(|| "Favorites".to_string());
+                            }
+                            jhentai_core::service::favorite::FavoriteAction::Remove => {
+                                // parser 同时填 index 与 name，两个都要清，否则 is_favorite() 仍为真
+                                detail.favorite_tag_index = None;
+                                detail.favorite_tag_name = None;
+                            }
+                        }
+                        let favorite = detail.is_favorite();
+                        window.set_detail_is_favorite(favorite);
+                    }
+                }
+                // UI 状态已在上方直接更新，无需再触发其它页面的事件
+            });
+        });
+    }
+
     /// 返回上一页：只有真的出栈成功才切 UI，且按栈顶全变体映射
     pub fn go_back(self: &Rc<Self>) {
         if !self.nav.borrow_mut().back() {

@@ -118,7 +118,12 @@ pub fn start(timer: &Timer, controller: &Rc<crate::AppController>, interval: Dur
                     }
                 }
             };
-            if due {
+            // 到最后一页就停，避免空转并反复写阅读进度
+            let at_last = {
+                let state = this.reader.lock().unwrap();
+                state.index + 1 >= state.len()
+            };
+            if due && !at_last {
                 this.reader_step(1);
             }
         }
