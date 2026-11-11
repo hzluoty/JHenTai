@@ -275,6 +275,41 @@ impl AppController {
         });
 
         let weak = Rc::downgrade(self);
+        self.window.on_set_account_user(move |text| {
+            if let Some(this) = weak.upgrade() {
+                this.window.set_account_user(text);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_set_account_password(move |text| {
+            if let Some(this) = weak.upgrade() {
+                this.window.set_account_password(text);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_login(move |user, password| {
+            if let Some(this) = weak.upgrade() {
+                this.login(user.to_string(), password.to_string());
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_logout(move || {
+            if let Some(this) = weak.upgrade() {
+                this.logout();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_import_cookies(move |raw| {
+            if let Some(this) = weak.upgrade() {
+                this.import_cookies(raw.to_string());
+            }
+        });
+
+        let weak = Rc::downgrade(self);
         self.window.on_toggle_site(move || {
             if let Some(this) = weak.upgrade() {
                 this.toggle_site();

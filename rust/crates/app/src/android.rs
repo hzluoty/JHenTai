@@ -52,6 +52,7 @@ fn run(app: slint::android::AndroidApp) -> Result<(), Box<dyn std::error::Error>
     let controller = Rc::new(crate::AppController::new(options, Some(data_dir), platform.clone())?);
     controller.wire_callbacks();
     controller.load_settings();
+    controller.restore_account();
     if controller.is_locked() {
         controller.window().set_locked(true);
     }

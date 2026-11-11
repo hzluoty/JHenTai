@@ -41,6 +41,22 @@ pub async fn login(
     user_name: &str,
     pass_hash: &str,
 ) -> Result<(), LoginError> {
+    login_net(client, state, resolver, user_name, pass_hash).await?;
+    // 落盘（调用方已持锁，这里只是把当前 cookie 序列化）
+    if let Ok(guard) = state.lock() {
+        crate::config::write_string(store, keys::EH_COOKIE, "", &guard.cookies.to_json());
+    }
+    Ok(())
+}
+
+/// 只做网络登录并更新内存 cookie（不碰 store，便于在 async 任务里调用）。
+pub async fn login_net(
+    client: &Client,
+    state: &Arc<Mutex<NetState>>,
+    resolver: &FrontingResolver,
+    user_name: &str,
+    pass_hash: &str,
+) -> Result<(), LoginError> {
     let form = vec![
         ("CookieDate".to_string(), "1".to_string()),
         ("b".to_string(), "d".to_string()),
@@ -60,15 +76,12 @@ pub async fn login(
         _ => LoginError::UserNameOrPasswordMismatch,
     })?;
 
-    // 登录成功：把 cookie 落盘（`igneous` 只有 EX 会给，缺了就是拿不到 EX 权限）
+    // 登录成功：写内存 cookie（`igneous` 只有 EX 会给，缺了就拿不到 EX 权限）
     let mut guard = state.lock().map_err(|e| LoginError::Network(e.to_string()))?;
     guard.cookies.store([
         Cookie::new("ipb_member_id", member_id.to_string()),
         Cookie::new("ipb_pass_hash", pass_hash),
     ]);
-    let json = guard.cookies.to_json();
-    drop(guard);
-    crate::config::write_string(store, keys::EH_COOKIE, "", &json);
     Ok(())
 }
 

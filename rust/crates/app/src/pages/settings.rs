@@ -5,6 +5,8 @@
 
 use std::rc::Rc;
 
+use slint::ComponentHandle;
+
 use jhentai_core::config::settings::{DownloadSetting, EhSetting, ReadSetting, SecuritySetting};
 use jhentai_core::config::{keys, network::NetworkSetting};
 
@@ -203,6 +205,88 @@ impl crate::AppController {
             // client 存在 Mutex 里，支持代理热替换
             *self.client.lock().unwrap() = client;
         }
+    }
+}
+
+impl crate::AppController {
+    /// 账号状态同步到 UI
+    pub fn apply_account_to_ui(self: &Rc<Self>) {
+        let (logged_in, name) = {
+            let guard = self.net.lock().unwrap();
+            let logged_in = guard.cookies.has_logged_in();
+            (logged_in, guard.cookies.ipb_member_id().map(|id| format!("member #{id}")).unwrap_or_default())
+        };
+        self.window.set_account_logged_in(logged_in);
+        self.window.set_account_name(name.into());
+    }
+
+    /// 账号密码登录（E-H 的 forums 登录页）
+    pub fn login(self: &Rc<Self>, user_name: String, password: String) {
+        if user_name.trim().is_empty() || password.is_empty() {
+            self.window.set_account_status("username and password required".into());
+            return;
+        }
+        self.window.set_account_status("signing in…".into());
+
+        let client = self.client.lock().unwrap().clone();
+        let net = self.net.clone();
+        let resolver = self.resolver.clone();
+        let store = self.store.clone();
+        let window_weak = self.window.as_weak();
+        let ui_events = self.ui_events.clone();
+
+        self.runtime.spawn(async move {
+            // 网络登录只碰 NetState（Send），落盘在 UI 线程做，避免 MutexGuard 跨 await
+            let result = jhentai_core::service::account::login_net(&client, &net, &resolver, &user_name, &password).await;
+            let message = match &result {
+                Ok(()) => "signed in".to_string(),
+                Err(e) => e.to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if result.is_ok() {
+                    if let (Ok(guard), Ok(mut store)) = (net.lock(), store.lock()) {
+                        let json = guard.cookies.to_json();
+                        jhentai_core::config::write_string(store.as_mut(), jhentai_core::config::keys::EH_COOKIE, "", &json);
+                    }
+                }
+                if let Some(window) = window_weak.upgrade() {
+                    window.set_account_status(message.into());
+                }
+                ui_events.request_account();
+            });
+        });
+    }
+
+    /// 导入浏览器 cookie 串
+    pub fn import_cookies(self: &Rc<Self>, raw: String) {
+        let count = {
+            let Ok(mut store) = self.store.lock() else {
+                return;
+            };
+            jhentai_core::service::account::import_cookies(&self.net, store.as_mut(), &raw)
+        };
+        self.window.set_account_status(format!("imported {count} cookies").into());
+        self.apply_account_to_ui();
+    }
+
+    pub fn logout(self: &Rc<Self>) {
+        if let Ok(mut store) = self.store.lock() {
+            jhentai_core::service::account::logout(&self.net, store.as_mut());
+        }
+        self.window.set_account_status("signed out".into());
+        self.apply_account_to_ui();
+    }
+
+    /// 启动时恢复 cookie
+    pub fn restore_account(self: &Rc<Self>) {
+        let logged_in = {
+            let Ok(store) = self.store.lock() else {
+                return;
+            };
+            jhentai_core::service::account::restore_cookies(&self.net, store.as_ref())
+        };
+        let _ = logged_in;
+        self.apply_account_to_ui();
     }
 }
 

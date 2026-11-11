@@ -201,8 +201,18 @@ export component AppWindow inherits Window {
     in-out property <bool> setting-persistent: true;
     in-out property <string> setting-version: "";
     in-out property <bool> locked: false;
+    in-out property <string> account-name: "";
+    in-out property <bool> account-logged-in: false;
+    in-out property <string> account-status: "";
+    in-out property <string> account-user: "";
+    in-out property <string> account-password: "";
+    callback set-account-user(string);
+    callback set-account-password(string);
 
     // ---- callbacks to Rust ----
+    callback login(string, string);
+    callback logout();
+    callback import-cookies(string);
     callback toggle-site();
     callback set-proxy(string);
     callback toggle-domain-fronting();
@@ -325,6 +335,47 @@ export component AppWindow inherits Window {
                 padding: 12px;
 
                 Text { text: "Account & Site"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Rectangle {
+                    height: 176px;
+                    border-radius: 10px; background: Theme.card;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        Text {
+                            text: account-logged-in ? ("Signed in as " + account-name) : "Not signed in (EX & original images need login)";
+                            color: account-logged-in ? Theme.fg : Theme.fg-dim;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        if !account-logged-in : LineEdit {
+                            placeholder-text: "username / email";
+                            edited(text) => { root.set-account-user(text); }
+                        }
+                        if !account-logged-in : LineEdit {
+                            input-type: password;
+                            placeholder-text: "password";
+                            edited(text) => { root.set-account-password(text); }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            if !account-logged-in : Button {
+                                text: "Sign in";
+                                clicked => { root.login(root.account-user, root.account-password); }
+                            }
+                            if account-logged-in : Button {
+                                text: "Sign out";
+                                clicked => { root.logout(); }
+                            }
+                            Text {
+                                text: account-status;
+                                color: Theme.fg-dim;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
                 Rectangle {
                     height: 48px; border-radius: 10px; background: Theme.card;
                     HorizontalLayout {

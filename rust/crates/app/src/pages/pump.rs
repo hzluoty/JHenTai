@@ -20,6 +20,7 @@ pub struct UiEvents {
     pub reader: AtomicBool,
     pub more_thumbs: AtomicBool,
     pub downloads: AtomicBool,
+    pub account: AtomicBool,
 }
 
 impl UiEvents {
@@ -29,6 +30,14 @@ impl UiEvents {
 
     pub fn request_details_thumbs(&self) {
         self.details_thumbs.store(true, Ordering::Relaxed);
+    }
+
+    pub fn request_account(&self) {
+        self.account.store(true, Ordering::Relaxed);
+    }
+
+    pub fn take_account(&self) -> bool {
+        self.account.swap(false, Ordering::Relaxed)
     }
 
     pub fn request_downloads(&self) {
@@ -86,6 +95,9 @@ pub fn start(timer: &Timer, controller: &Rc<crate::AppController>, interval: Dur
         if this.ui_events.take_downloads() {
             this.refresh_downloads_view();
         }
+        if this.ui_events.take_account() {
+            this.apply_account_to_ui();
+        }
         // 返回键：Java 主线程只置标志，出栈必须在 UI 线程
         if crate::nav::BACK_REQUESTED.swap(false, Ordering::Relaxed) {
             this.go_back();
@@ -120,5 +132,9 @@ mod tests {
         events.request_downloads();
         assert!(events.take_downloads());
         assert!(!events.take_downloads());
+
+        events.request_account();
+        assert!(events.take_account());
+        assert!(!events.take_account());
     }
 }
