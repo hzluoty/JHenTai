@@ -202,6 +202,9 @@ pub struct AppController {
     pub(crate) ui_pump_timer: slint::Timer,
     /// 平台能力（屏幕常亮/权限/分享等）
     pub(crate) platform: Arc<dyn jhentai_platform::Platform>,
+    /// 自动翻页：上次翻页时刻 + 是否启用（仅阅读页有效）
+    pub(crate) auto_turn: Arc<Mutex<Option<std::time::Instant>>>,
+    pub(crate) auto_turn_enabled: std::cell::Cell<bool>,
     /// 缓存目录（分享/保存图片时先落盘）
     pub(crate) cache_dir: Arc<Mutex<std::path::PathBuf>>,
     /// 设置（UI 线程；持久化走 store）
@@ -254,6 +257,8 @@ impl AppController {
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
             platform,
+            auto_turn: Arc::new(Mutex::new(None)),
+            auto_turn_enabled: std::cell::Cell::new(false),
             cache_dir: Arc::new(Mutex::new(
                 data_dir.clone().unwrap_or_else(|| std::path::PathBuf::from("cache")).join("cache"),
             )),
@@ -371,6 +376,20 @@ impl AppController {
         self.window.on_toggle_domain_fronting(move || {
             if let Some(this) = weak.upgrade() {
                 this.toggle_domain_fronting();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_toggle_auto_turn(move || {
+            if let Some(this) = weak.upgrade() {
+                this.toggle_auto_turn();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_cycle_auto_interval(move || {
+            if let Some(this) = weak.upgrade() {
+                this.cycle_auto_interval();
             }
         });
 

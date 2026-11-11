@@ -302,9 +302,10 @@ impl crate::AppController {
             return;
         }
         let current = self.nav.borrow().current().clone();
-        // 离开阅读页时取消屏幕常亮
+        // 离开阅读页时取消屏幕常亮与音量键拦截
         if !matches!(current, crate::nav::Page::Read { .. }) {
             self.platform.set_keep_screen_on(false);
+            self.auto_turn_enabled.set(false);
         }
         // 离开详情页时清掉 gid，避免在途响应继续拉缩略图
         if !matches!(current, crate::nav::Page::Details { .. }) {
@@ -316,11 +317,28 @@ impl crate::AppController {
     /// 页栈 → UI 的单一映射（push / go_back 都走它，避免两处漂移）
     pub fn show_page(self: &Rc<Self>, page: &crate::nav::Page) {
         match page {
-            crate::nav::Page::GalleryList => self.window.set_page(0),
-            crate::nav::Page::Details { .. } => self.window.set_page(1),
-            crate::nav::Page::Read { .. } => self.window.set_page(2),
-            crate::nav::Page::Downloads => self.window.set_page(3),
-            crate::nav::Page::Settings => self.window.set_page(4),
+            crate::nav::Page::GalleryList => {
+                self.window.set_page(0);
+                crate::nav::VOLUME_CONSUMER.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+            crate::nav::Page::Details { .. } => {
+                self.window.set_page(1);
+                crate::nav::VOLUME_CONSUMER.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+            crate::nav::Page::Read { .. } => {
+                self.window.set_page(2);
+                // 音量键拦截：所有进入 Read 的路径（在线/离线）都在这里统一置位
+                let enabled = self.settings.borrow().read.enable_page_turn_by_volume_keys;
+                crate::nav::VOLUME_CONSUMER.store(enabled, std::sync::atomic::Ordering::Relaxed);
+            }
+            crate::nav::Page::Downloads => {
+                self.window.set_page(3);
+                crate::nav::VOLUME_CONSUMER.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+            crate::nav::Page::Settings => {
+                self.window.set_page(4);
+                crate::nav::VOLUME_CONSUMER.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 }

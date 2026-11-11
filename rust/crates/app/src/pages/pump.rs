@@ -3,8 +3,9 @@
 //! 定时器回调只能碰 Send 的东西（`AtomicBool`/`Arc<Mutex<..>>`），
 //! 真正的 Slint 模型修改都发生在 UI 线程。
 //!
-//! 例外：`nav::BACK_REQUESTED` 由 JNI 导出直接置位，因此留在 nav 模块，
-//! 但同样由这里的泵消费。新事件请加进 `UiEvents`，不要另开字段。
+//! 例外（JNI 事件区）：Java 主线程写入的原子量都放在 `nav.rs`（`BACK_REQUESTED`、
+//! `VOLUME_KEY_STEP`、`VOLUME_CONSUMER`、`NAV_DEPTH`），同样由这里的泵消费。
+//! 新增「tokio → UI」事件进 `UiEvents`；新增「Java → UI」事件进 `nav.rs`，不要另开通道。
 
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -101,6 +102,34 @@ pub fn start(timer: &Timer, controller: &Rc<crate::AppController>, interval: Dur
         // 返回键：Java 主线程只置标志，出栈必须在 UI 线程
         if crate::nav::BACK_REQUESTED.swap(false, Ordering::Relaxed) {
             this.go_back();
+        }
+        // 自动翻页（仅阅读页）：间隔来自 ReadSetting.autoModeInterval
+        if this.auto_turn_enabled.get() && matches!(this.nav.borrow().current(), crate::nav::Page::Read { .. }) {
+            let interval = std::time::Duration::from_secs_f64(
+                this.settings.borrow().read.auto_mode_interval.max(0.5),
+            );
+            let due = {
+                let mut last = this.auto_turn.lock().unwrap();
+                match *last {
+                    Some(t) if t.elapsed() < interval => false,
+                    _ => {
+                        *last = Some(std::time::Instant::now());
+                        true
+                    }
+                }
+            };
+            if due {
+                this.reader_step(1);
+            }
+        }
+
+        // 音量键翻页（累计多步时逐张翻）。`matches!` 是防御：用户可能在 JNI 置位后
+        // 立刻退出阅读页，此时页栈已经不是 Read，别把翻页作用到别的页面。
+        let step = crate::nav::take_volume_step();
+        if step != 0 && matches!(this.nav.borrow().current(), crate::nav::Page::Read { .. }) {
+            for _ in 0..step.unsigned_abs() {
+                this.reader_step(if step > 0 { 1 } else { -1 });
+            }
         }
     });
 }

@@ -74,6 +74,8 @@ impl crate::AppController {
         self.window.set_setting_domain_fronting(state.network.enable_domain_fronting);
         self.window.set_setting_read_direction(state.read.read_direction.label().into());
         self.window.set_setting_keep_awake(state.read.keep_screen_awake_when_reading);
+        self.window.set_setting_auto_turn(self.auto_turn_enabled.get());
+        self.window.set_setting_auto_interval(format!("{:.0}s", state.read.auto_mode_interval).into());
         self.window.set_setting_download_concurrency(state.download.download_task_concurrency as i32);
         self.window.set_setting_download_original(state.download.download_original_image);
         self.window.set_setting_pin_enabled(state.security.is_locked_enabled());
@@ -162,6 +164,30 @@ impl crate::AppController {
                 jhentai_core::config::write_string(store.as_mut(), keys::LANGUAGE, "", lang.code());
             }
         }
+        self.apply_settings_to_ui();
+    }
+
+    /// 自动翻页开关
+    pub fn toggle_auto_turn(self: &Rc<Self>) {
+        let enabled = !self.auto_turn_enabled.get();
+        self.auto_turn_enabled.set(enabled);
+        *self.auto_turn.lock().unwrap() = Some(std::time::Instant::now());
+        self.window.set_setting_auto_turn(enabled);
+    }
+
+    /// 自动翻页间隔循环：1 → 2 → 3 → 5 → 10 → 1
+    pub fn cycle_auto_interval(self: &Rc<Self>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.read.auto_mode_interval = match state.read.auto_mode_interval as i64 {
+                1 => 2.0,
+                2 => 3.0,
+                3 => 5.0,
+                5 => 10.0,
+                _ => 1.0,
+            };
+        }
+        self.persist(keys::READ_SETTING, &self.settings.borrow().read);
         self.apply_settings_to_ui();
     }
 

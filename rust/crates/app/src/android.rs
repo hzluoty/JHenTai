@@ -18,6 +18,22 @@ pub extern "system" fn Java_top_jtmonster_jhentai_MainActivity_nativeOnBack(
     }
 }
 
+/// 音量键：返回 true 表示 Rust 侧要消费这个按键（阅读页 + 设置开启）
+#[no_mangle]
+pub extern "system" fn Java_top_jtmonster_jhentai_MainActivity_nativeOnVolumeKey(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    up: jni::sys::jboolean,
+) -> jni::sys::jboolean {
+    let consumer = crate::nav::VOLUME_CONSUMER.load(std::sync::atomic::Ordering::Relaxed);
+    if !consumer {
+        return 0;
+    }
+    // 累计而不是覆盖：按住时系统重发快于 UI 泵
+    crate::nav::VOLUME_KEY_STEP.fetch_add(if up != 0 { 1 } else { -1 }, std::sync::atomic::Ordering::Relaxed);
+    1
+}
+
 /// Slint 的 Android 后端入口（`android-activity` crate 约定）
 #[no_mangle]
 pub fn android_main(app: slint::android::AndroidApp) {

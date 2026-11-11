@@ -81,6 +81,13 @@ pub struct ReadSetting {
     pub preload_distance: i64,
     #[serde(rename = "preloadPageCount", default = "default_preload")]
     pub preload_page_count: i64,
+    /// 自动翻页间隔（秒），对应 Dart 的 `autoModeInterval`
+    #[serde(rename = "autoModeInterval", default = "default_auto_interval")]
+    pub auto_mode_interval: f64,
+}
+
+fn default_auto_interval() -> f64 {
+    2.0
 }
 
 fn default_preload() -> i64 {
@@ -96,6 +103,7 @@ impl Default for ReadSetting {
             show_status_info: true,
             preload_distance: 1,
             preload_page_count: 1,
+            auto_mode_interval: 2.0,
         }
     }
 }
@@ -167,12 +175,13 @@ mod tests {
     fn read_setting_tolerates_unknown_fields() {
         // Dart 版会写几十个字段，Rust 只认自己那些
         let json = r#"{"readDirection":2,"keepScreenAwakeWhenReading":false,"enablePageTurnByVolumeKeys":true,
-            "showStatusInfo":true,"preloadDistance":3,"preloadPageCount":2,
+            "showStatusInfo":true,"preloadDistance":3,"preloadPageCount":2,"autoModeInterval":1.5,
             "imageSpace":6,"showThumbnails":true,"enableBottomMenu":false}"#;
         let setting: ReadSetting = serde_json::from_str(json).unwrap();
         assert!(setting.read_direction.is_right_to_left());
         assert!(!setting.keep_screen_awake_when_reading);
         assert_eq!(setting.preload_distance, 3);
+        assert!((setting.auto_mode_interval - 1.5).abs() < f64::EPSILON);
     }
 
     #[test]

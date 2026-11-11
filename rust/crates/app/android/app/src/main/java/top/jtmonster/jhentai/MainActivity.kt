@@ -26,6 +26,12 @@ class MainActivity : NativeActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // 音量键翻页：Rust 只在阅读页且设置开启时返回 true
+        if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (event.action == KeyEvent.ACTION_DOWN && nativeOnVolumeKey(event.keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
+                return true
+            }
+        }
         // 返回键先给 Rust 的页栈；栈底时交回系统（退出应用）
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP && nativeOnBack()) return true
@@ -43,6 +49,10 @@ class MainActivity : NativeActivity() {
         /** 返回 true 表示 Rust 侧已出栈，按键被消费 */
         @JvmStatic
         external fun nativeOnBack(): Boolean
+
+        /** 返回 true 表示 Rust 侧已消费该音量键（阅读页翻页） */
+        @JvmStatic
+        external fun nativeOnVolumeKey(up: Boolean): Boolean
 
 
         // shortcut: 音量键翻页在 M4 阅读器落地时再接（dispatchKeyEvent + JNI 回调）

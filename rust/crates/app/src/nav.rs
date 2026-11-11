@@ -22,6 +22,20 @@ pub enum Page {
 pub static NAV_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 pub static BACK_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// 阅读页是否消费音量键（由阅读器进出 + 设置开关维护）
+pub static VOLUME_CONSUMER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 音量键翻页的累计步数：+n 表示向后翻 n 张，-n 表示向前（0 = 无请求）。
+///
+/// 用 `fetch_add` 累计：按住音量键时系统重发事件比 UI 泵（120ms）快，
+/// `swap` 语义会丢掉中间的按键。
+pub static VOLUME_KEY_STEP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// 取出并清零累计步数
+pub fn take_volume_step() -> i32 {
+    VOLUME_KEY_STEP.swap(0, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 线性页栈。`back()` 出栈；栈底永远是 GalleryList。
 #[derive(Debug, Default)]
 pub struct Navigator {
