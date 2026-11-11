@@ -122,7 +122,7 @@ impl crate::AppController {
             guard.loaded_thumbnails.clear();
         }
 
-        let client = self.client.clone();
+        let client = self.client.lock().unwrap().clone();
         let net = self.net.clone();
         let resolver = self.resolver.clone();
         let window_weak = self.window.as_weak();
@@ -185,7 +185,7 @@ impl crate::AppController {
         if detail.thumbnails_page_count <= 1 {
             return;
         }
-        let client = self.client.clone();
+        let client = self.client.lock().unwrap().clone();
         let net = self.net.clone();
         let resolver = self.resolver.clone();
         let details = self.details.clone();
@@ -255,7 +255,7 @@ impl crate::AppController {
         }
 
         for (_index, href, url) in pending {
-            let client = self.client.clone();
+            let client = self.client.lock().unwrap().clone();
             let net = self.net.clone();
             let resolver = self.resolver.clone();
             let details = self.details.clone();
@@ -302,6 +302,10 @@ impl crate::AppController {
             return;
         }
         let current = self.nav.borrow().current().clone();
+        // 离开阅读页时取消屏幕常亮
+        if !matches!(current, crate::nav::Page::Read { .. }) {
+            self.platform.set_keep_screen_on(false);
+        }
         // 离开详情页时清掉 gid，避免在途响应继续拉缩略图
         if !matches!(current, crate::nav::Page::Details { .. }) {
             self.details.lock().unwrap().gid = 0;
@@ -315,8 +319,8 @@ impl crate::AppController {
             crate::nav::Page::GalleryList => self.window.set_page(0),
             crate::nav::Page::Details { .. } => self.window.set_page(1),
             crate::nav::Page::Read { .. } => self.window.set_page(2),
-            // shortcut: 下载/设置页的 UI 在 M5/M6 接入，先回到列表避免白屏
-            crate::nav::Page::Downloads | crate::nav::Page::Settings => self.window.set_page(0),
+            crate::nav::Page::Downloads => self.window.set_page(3),
+            crate::nav::Page::Settings => self.window.set_page(4),
         }
     }
 }

@@ -172,9 +172,15 @@ fn old_large_thumbnails(elements: &[ElementRef]) -> Vec<GalleryThumbnail> {
 }
 
 pub(super) fn thumbnails_page_count(d: &Html) -> i64 {
-    let tds: Vec<ElementRef> = super::eh::all(d, ".ptt > tbody > tr");
-    tds.get(tds.len().saturating_sub(2))
+    // 分页器结构：<table class="ptt"><tr><td>&lt;</td><td><a>1</a></td>…<td>&gt;</td></tr></table>
+    // 倒数第二格是最后一页的页码（Dart 版同样取 len-2）。
+    let cells: Vec<ElementRef> = super::eh::all(d, ".ptt tr")
+        .first()
+        .map(|tr| tr.children().filter_map(ElementRef::wrap).collect())
+        .unwrap_or_default();
+    cells
+        .get(cells.len().saturating_sub(2))
         .and_then(|td| first_el(*td, "a"))
         .and_then(|a| parse_i64(&a.text().collect::<Vec<_>>().join("")))
-        .unwrap_or(0)
+        .unwrap_or(1)
 }

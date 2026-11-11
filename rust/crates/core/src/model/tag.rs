@@ -88,6 +88,11 @@ impl TagMap {
         }
     }
 
+    /// 平铺成 TagData 列表（ComicInfo、搜索等需要）
+    pub fn tag_datas(&self) -> Vec<TagData> {
+        self.0.iter().flat_map(|(_, tags)| tags.iter().map(|t| t.tag_data.clone())).collect()
+    }
+
     pub fn get(&self, namespace: &str) -> Option<&Vec<GalleryTag>> {
         self.0.iter().find(|(n, _)| n == namespace).map(|(_, v)| v)
     }

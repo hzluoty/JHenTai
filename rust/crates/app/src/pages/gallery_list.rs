@@ -156,7 +156,7 @@ pub fn apply_page(state: &mut ListState, page: GalleryPageInfo) {
 pub struct AppController {
     pub(crate) window: AppWindow,
     pub(crate) net: Arc<Mutex<NetState>>,
-    pub(crate) client: Client,
+    pub(crate) client: Arc<Mutex<Client>>,
     pub(crate) resolver: FrontingResolver,
     /// 列表页状态
     pub(crate) state: Arc<Mutex<ListState>>,
@@ -168,6 +168,12 @@ pub struct AppController {
     pub(crate) ui_events: Arc<crate::pages::pump::UiEvents>,
     /// UI 事件泵（页面级定时器都走它）
     pub(crate) ui_pump_timer: slint::Timer,
+    /// 平台能力（屏幕常亮/权限/分享等）
+    pub(crate) platform: Arc<dyn jhentai_platform::Platform>,
+    /// 设置（UI 线程；持久化走 store）
+    pub(crate) settings: std::cell::RefCell<crate::pages::settings::SettingsState>,
+    /// 下载页状态（跨线程：只装 Send 数据）
+    pub(crate) downloads: Arc<Mutex<crate::pages::downloads::DownloadsState>>,
     /// 阅读器状态（跨线程，只装 Send 数据）
     pub(crate) reader: Arc<Mutex<crate::pages::reader::ReaderState>>,
     /// 阅读器已解码的图片（只在 UI 线程读写）
@@ -181,9 +187,15 @@ pub struct AppController {
 
 impl AppController {
     /// `data_dir`：`getExternalFilesDir(null)`，里面是 `db.sqlite`
-    pub fn new(options: ClientOptions, data_dir: Option<std::path::PathBuf>) -> Result<Self, String> {
+    pub fn new(
+        options: ClientOptions,
+        data_dir: Option<std::path::PathBuf>,
+        platform: Arc<dyn jhentai_platform::Platform>,
+    ) -> Result<Self, String> {
         let window = AppWindow::new().map_err(|e| e.to_string())?;
         let opened = crate::store::open(data_dir.as_deref());
+        // 下载目录与 Dart 版一致：<externalFilesDir>/download
+        let download_dir = data_dir.clone().unwrap_or_else(|| std::path::PathBuf::from("download")).join("download");
         let net = NetState::shared(options);
         let (resolver, client) = {
             let guard = net.lock().map_err(|e| e.to_string())?;
@@ -200,13 +212,20 @@ impl AppController {
         Ok(Self {
             window,
             net,
-            client,
+            client: Arc::new(Mutex::new(client)),
             resolver,
             state: Arc::new(Mutex::new(ListState::default())),
             details: Arc::new(Mutex::new(crate::pages::details::DetailsState::default())),
             nav: std::cell::RefCell::new(crate::nav::Navigator::new()),
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
+            platform,
+            settings: std::cell::RefCell::new(crate::pages::settings::SettingsState::default()),
+            downloads: Arc::new(Mutex::new(crate::pages::downloads::DownloadsState {
+                download_path: download_dir.clone(),
+                concurrency: 3,
+                ..Default::default()
+            })),
             reader: Arc::new(Mutex::new(crate::pages::reader::ReaderState::default())),
             reader_images: Rc::new(std::cell::RefCell::new(crate::pages::reader::ReaderImages::default())),
             store: Arc::new(Mutex::new(opened.store)),
@@ -242,6 +261,104 @@ impl AppController {
         self.window.on_reader_step(move |delta| {
             if let Some(this) = weak.upgrade() {
                 this.reader_step(delta as i64);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_open_settings(move || {
+            if let Some(this) = weak.upgrade() {
+                let page = crate::nav::Page::Settings;
+                this.nav.borrow_mut().push(page.clone());
+                this.show_page(&page);
+                this.apply_settings_to_ui();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_toggle_site(move || {
+            if let Some(this) = weak.upgrade() {
+                this.toggle_site();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_set_proxy(move |address| {
+            if let Some(this) = weak.upgrade() {
+                this.set_proxy(address.to_string());
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_toggle_domain_fronting(move || {
+            if let Some(this) = weak.upgrade() {
+                this.toggle_domain_fronting();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_cycle_read_direction(move || {
+            if let Some(this) = weak.upgrade() {
+                this.cycle_read_direction();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_toggle_keep_awake(move || {
+            if let Some(this) = weak.upgrade() {
+                this.toggle_keep_awake();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_bump_download_concurrency(move || {
+            if let Some(this) = weak.upgrade() {
+                this.bump_download_concurrency();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_toggle_download_original(move || {
+            if let Some(this) = weak.upgrade() {
+                this.toggle_download_original();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_set_pin(move |pin| {
+            if let Some(this) = weak.upgrade() {
+                let pin = pin.trim().to_string();
+                this.set_pin(if pin.is_empty() { None } else { Some(pin) });
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_unlock(move |input| {
+            if let Some(this) = weak.upgrade() {
+                this.unlock(input.as_str());
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_download(move || {
+            if let Some(this) = weak.upgrade() {
+                this.start_download();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_open_downloads(move || {
+            if let Some(this) = weak.upgrade() {
+                this.scan_downloads();
+                let page = crate::nav::Page::Downloads;
+                this.nav.borrow_mut().push(page.clone());
+                this.show_page(&page);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_open_local_gallery(move |gid| {
+            if let Some(this) = weak.upgrade() {
+                this.open_local_gallery(gid as i64);
             }
         });
 
@@ -320,7 +437,11 @@ impl AppController {
     /// 按游标加载（异步，结果回 UI 线程）
     pub fn load(self: &Rc<Self>, cursor: PageCursor) {
         let tab = self.state.lock().map(|g| g.tab).unwrap_or_default();
-        let url = tab.url(&cursor);
+        let mut url = tab.url(&cursor);
+        // 站点设置：选了 EX 就把 E-H 域名换成 EX（cookie 里没 igneous 时 EX 会退化为空白页）
+        if self.settings.borrow().eh.is_ex() {
+            url = url.replace(jhentai_core::net::consts::EH_INDEX, jhentai_core::net::consts::EX_INDEX);
+        }
         if url.is_empty() {
             self.window.set_galleries(Rc::new(slint::VecModel::from(Vec::<GalleryItem>::new())).into());
             self.window.set_error_text("History comes from the local database (M2)".into());
@@ -332,7 +453,7 @@ impl AppController {
         self.window.set_error_text("".into());
 
         let net = self.net.clone();
-        let client = self.client.clone();
+        let client = self.client.lock().unwrap().clone();
         let resolver = self.resolver.clone();
         let state = self.state.clone();
         let window_weak = self.window.as_weak();
@@ -416,7 +537,7 @@ impl AppController {
                 continue;
             }
             let net = self.net.clone();
-            let client = self.client.clone();
+            let client = self.client.lock().unwrap().clone();
             let resolver = self.resolver.clone();
             let state = self.state.clone();
             let window_weak = self.window.as_weak();

@@ -4,6 +4,8 @@ pub mod cover_loader;
 pub mod details;
 pub mod pump;
 pub mod reader;
+pub mod settings;
+pub mod downloads;
 pub mod gallery_list;
 
 pub use gallery_list::AppController;

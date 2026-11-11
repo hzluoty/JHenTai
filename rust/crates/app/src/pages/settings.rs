@@ -1,0 +1,232 @@
+//! 设置页 controller：站点、网络、阅读、下载、安全（PIN）、关于。
+//!
+//! 设置全部落在 `local_config`（`config::ConfigStore`），字段名与 Dart 版一致。
+//! 许可证：Slint Royalty-free 要求在「关于」页展示 `AboutSlint`。
+
+use std::rc::Rc;
+
+use jhentai_core::config::settings::{DownloadSetting, EhSetting, ReadSetting, SecuritySetting};
+use jhentai_core::config::{keys, network::NetworkSetting};
+
+/// 设置内存态（UI 线程读写；持久化走 `AppController::store`）
+#[derive(Debug, Clone, Default)]
+pub struct SettingsState {
+    pub eh: EhSetting,
+    pub network: NetworkSetting,
+    pub read: ReadSetting,
+    pub download: DownloadSetting,
+    pub security: SecuritySetting,
+    /// 应用锁是否已解锁（进程生命周期内有效）
+    pub unlocked: bool,
+}
+
+impl crate::AppController {
+    /// 启动时从 `local_config` 读设置（失败用默认值）
+    pub fn load_settings(self: &Rc<Self>) {
+        let mut state = self.settings.borrow_mut();
+        if let Ok(store) = self.store.lock() {
+            if let Some(value) = jhentai_core::config::read_json::<EhSetting>(store.as_ref(), keys::EH_SETTING) {
+                state.eh = value;
+            }
+            if let Some(value) = jhentai_core::config::read_json::<NetworkSetting>(store.as_ref(), keys::NETWORK_SETTING) {
+                state.network = value;
+            }
+            if let Some(value) = jhentai_core::config::read_json::<ReadSetting>(store.as_ref(), keys::READ_SETTING) {
+                state.read = value;
+            }
+            if let Some(value) = jhentai_core::config::read_json::<DownloadSetting>(store.as_ref(), keys::DOWNLOAD_SETTING) {
+                state.download = value;
+            }
+            if let Some(value) = jhentai_core::config::read_json::<SecuritySetting>(store.as_ref(), keys::SECURITY_SETTING) {
+                state.security = value;
+            }
+        }
+        drop(state);
+        self.apply_settings_to_ui();
+    }
+
+    fn persist<T: serde::Serialize>(&self, key: &str, value: &T) {
+        if let Ok(mut store) = self.store.lock() {
+            jhentai_core::config::write_json(store.as_mut(), key, value);
+        }
+    }
+
+    /// 把设置渲染到 UI
+    pub fn apply_settings_to_ui(self: &Rc<Self>) {
+        let state = self.settings.borrow();
+        self.window.set_setting_is_ex(state.eh.is_ex());
+        self.window.set_setting_proxy_address(state.network.proxy_address.clone().into());
+        self.window.set_setting_proxy_type(match state.network.proxy_type {
+            jhentai_core::config::network::ProxyType::System => "system",
+            jhentai_core::config::network::ProxyType::Http => "http",
+            jhentai_core::config::network::ProxyType::Socks5 => "socks5",
+            jhentai_core::config::network::ProxyType::Socks4 => "socks4",
+            jhentai_core::config::network::ProxyType::Direct => "direct",
+        }
+        .into());
+        self.window.set_setting_domain_fronting(state.network.enable_domain_fronting);
+        self.window.set_setting_read_direction(state.read.read_direction.label().into());
+        self.window.set_setting_keep_awake(state.read.keep_screen_awake_when_reading);
+        self.window.set_setting_download_concurrency(state.download.download_task_concurrency as i32);
+        self.window.set_setting_download_original(state.download.download_original_image);
+        self.window.set_setting_pin_enabled(state.security.is_locked_enabled());
+        self.window.set_setting_persistent(self.store_is_persistent);
+        self.window.set_setting_version(env!("CARGO_PKG_VERSION").into());
+    }
+
+    /// 站点切换（EH ↔ EX）
+    pub fn toggle_site(self: &Rc<Self>) {
+        let is_ex = {
+            let mut state = self.settings.borrow_mut();
+            let next = !state.eh.is_ex();
+            state.eh.set_site(next);
+            next
+        };
+        {
+            let state = self.settings.borrow();
+            self.persist(keys::EH_SETTING, &state.eh);
+        }
+        self.window.set_setting_is_ex(is_ex);
+    }
+
+    /// 网络：代理地址 + 域前置开关（改完立即重建 client）
+    pub fn set_proxy(self: &Rc<Self>, address: String) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.network.proxy_address = address;
+            // 有地址就算 HTTP 代理，空则回系统
+            state.network.proxy_type = if state.network.proxy_address.trim().is_empty() {
+                jhentai_core::config::network::ProxyType::System
+            } else {
+                jhentai_core::config::network::ProxyType::Http
+            };
+        }
+        self.persist(keys::NETWORK_SETTING, &self.settings.borrow().network);
+        self.rebuild_network();
+        self.apply_settings_to_ui();
+    }
+
+    pub fn toggle_domain_fronting(self: &Rc<Self>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.network.enable_domain_fronting = !state.network.enable_domain_fronting;
+            if let Ok(mut net) = self.net.lock() {
+                net.options.enable_domain_fronting = state.network.enable_domain_fronting;
+            }
+        }
+        self.persist(keys::NETWORK_SETTING, &self.settings.borrow().network);
+        self.apply_settings_to_ui();
+    }
+
+    /// 阅读方向三态循环
+    pub fn cycle_read_direction(self: &Rc<Self>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.read.read_direction.cycle();
+        }
+        self.persist(keys::READ_SETTING, &self.settings.borrow().read);
+        self.apply_settings_to_ui();
+    }
+
+    pub fn toggle_keep_awake(self: &Rc<Self>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.read.keep_screen_awake_when_reading = !state.read.keep_screen_awake_when_reading;
+        }
+        self.persist(keys::READ_SETTING, &self.settings.borrow().read);
+        self.apply_settings_to_ui();
+    }
+
+    /// 下载并发 +1（1..=8 循环）
+    pub fn bump_download_concurrency(self: &Rc<Self>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.download.download_task_concurrency = if state.download.download_task_concurrency >= 8 {
+                1
+            } else {
+                state.download.download_task_concurrency + 1
+            };
+        }
+        {
+            let concurrency = self.settings.borrow().download.download_task_concurrency as usize;
+            let mut downloads = self.downloads.lock().unwrap();
+            downloads.concurrency = concurrency;
+        }
+        self.persist(keys::DOWNLOAD_SETTING, &self.settings.borrow().download);
+        self.apply_settings_to_ui();
+    }
+
+    pub fn toggle_download_original(self: &Rc<Self>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.download.download_original_image = !state.download.download_original_image;
+        }
+        self.persist(keys::DOWNLOAD_SETTING, &self.settings.borrow().download);
+        self.apply_settings_to_ui();
+    }
+
+    /// 设置 / 清除 PIN
+    pub fn set_pin(self: &Rc<Self>, pin: Option<String>) {
+        {
+            let mut state = self.settings.borrow_mut();
+            state.security.pin = pin;
+            state.unlocked = true;
+        }
+        self.persist(keys::SECURITY_SETTING, &self.settings.borrow().security);
+        self.apply_settings_to_ui();
+    }
+
+    /// 校验 PIN；成功则解锁
+    pub fn unlock(self: &Rc<Self>, input: &str) -> bool {
+        let ok = self.settings.borrow().security.verify(input);
+        if ok {
+            self.settings.borrow_mut().unlocked = true;
+            self.window.set_locked(false);
+        }
+        ok
+    }
+
+    /// 启动时是否需要显示锁屏
+    pub fn is_locked(self: &Rc<Self>) -> bool {
+        let state = self.settings.borrow();
+        state.security.is_locked_enabled() && !state.unlocked
+    }
+
+    /// 用当前设置重建 reqwest client（改代理/域前置后调用）
+    pub fn rebuild_network(self: &Rc<Self>) {
+        let network = self.settings.borrow().network.clone();
+        let options = jhentai_core::net::ClientOptions::from_setting(&network, None);
+        if let Ok(mut net) = self.net.lock() {
+            net.options = options.clone();
+        }
+        if let Ok(client) = jhentai_core::net::build_client(&self.net.lock().unwrap(), &self.resolver) {
+            // client 存在 Mutex 里，支持代理热替换
+            *self.client.lock().unwrap() = client;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_sane() {
+        let state = SettingsState::default();
+        assert_eq!(state.eh.site, "EH");
+        assert!(!state.eh.is_ex());
+        assert!(state.read.keep_screen_awake_when_reading);
+        assert_eq!(state.download.download_task_concurrency, 3);
+        assert!(!state.security.is_locked_enabled());
+    }
+
+    #[test]
+    fn pin_gating() {
+        let mut state = SettingsState::default();
+        state.security.pin = Some("4321".into());
+        assert!(!state.unlocked);
+        assert!(state.security.is_locked_enabled());
+        assert!(state.security.verify("4321"));
+        assert!(!state.security.verify("1234"));
+    }
+}

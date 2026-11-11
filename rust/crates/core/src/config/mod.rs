@@ -4,6 +4,7 @@
 //! 字段名与 Dart `toConfigString` 的 JSON 键一致。
 
 pub mod network;
+pub mod settings;
 
 use serde_json::Value;
 

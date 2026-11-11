@@ -27,16 +27,50 @@ pub struct ReaderState {
     pub index: usize,
     /// 解码完成待转成 `slint::Image` 的位图
     pub pending: HashMap<usize, RgbaImage>,
+    /// 本地画廊模式：按磁盘路径阅读（已下载）
+    pub local_files: Vec<std::path::PathBuf>,
 }
 
 impl ReaderState {
     pub fn new(gid: i64, is_ex: bool, thumbnails: Vec<GalleryThumbnail>, start: usize) -> Self {
         let count = thumbnails.len();
-        Self { gid, is_ex, thumbnails, status: vec![0; count], index: start.min(count.saturating_sub(1)), pending: HashMap::new() }
+        Self {
+            gid,
+            is_ex,
+            thumbnails,
+            status: vec![0; count],
+            index: start.min(count.saturating_sub(1)),
+            pending: HashMap::new(),
+            local_files: Vec::new(),
+        }
+    }
+
+    /// 切到本地画廊（已下载）：用文件列表替代缩略图
+    pub fn reset_local(&mut self, gid: i64, files: Vec<std::path::PathBuf>) {
+        let start = crate::pages::reader::ReaderState::load_start(gid);
+        self.gid = gid;
+        self.is_ex = false;
+        self.thumbnails = Vec::new();
+        self.local_files = files;
+        self.status = vec![0; self.local_files.len()];
+        self.index = start.min(self.local_files.len().saturating_sub(1));
+        self.pending.clear();
+    }
+
+    fn load_start(_gid: i64) -> usize {
+        0
+    }
+
+    pub fn is_local(&self) -> bool {
+        !self.local_files.is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.thumbnails.len()
+        if self.is_local() {
+            self.local_files.len()
+        } else {
+            self.thumbnails.len()
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -104,6 +138,11 @@ impl crate::AppController {
             images.gid = gid;
         }
 
+        // 阅读时按设置保持屏幕常亮
+        if self.settings.borrow().read.keep_screen_awake_when_reading {
+            self.platform.set_keep_screen_on(true);
+        }
+
         let page = crate::nav::Page::Read { gid };
         self.nav.borrow_mut().push(page.clone());
         self.show_page(&page);
@@ -119,10 +158,15 @@ impl crate::AppController {
         self.window.set_reader_index(index as i32);
         self.window.set_reader_total(total as i32);
 
+        let local = self.reader.lock().map(|s| s.is_local()).unwrap_or(false);
         for offset in [-1i64, 0, 1] {
             let target = index as i64 + offset;
             if target >= 0 && (target as usize) < total {
-                self.load_reader_page(target as usize);
+                if local {
+                    self.load_local_reader_page(target as usize);
+                } else {
+                    self.load_reader_page(target as usize);
+                }
             }
         }
     }
@@ -138,7 +182,7 @@ impl crate::AppController {
             (state.thumbnails[index].href.clone(), state.is_ex, state.gid)
         };
 
-        let client = self.client.clone();
+        let client = self.client.lock().unwrap().clone();
         let net = self.net.clone();
         let resolver = self.resolver.clone();
         let state = self.reader.clone();

@@ -1,7 +1,7 @@
 // JHenTai Rust 版主窗口：底部导航 + 画廊列表 + 详情。
 // 组件拆分遵循计划 §4.3：每页一个组件 + controller，单 Window + Rust 侧 Navigator。
 
-import { Button, ScrollView, ListView, VerticalBox, HorizontalBox, StandardListView } from "std-widgets.slint";
+import { AboutSlint, Button, ScrollView, ListView, VerticalBox, HorizontalBox, LineEdit, StandardListView } from "std-widgets.slint";
 
 export struct GalleryItem {
     gid: int,
@@ -23,6 +23,15 @@ export struct ThumbnailItem {
     href: string,
     offset: float,
     is-large: bool,
+}
+
+export struct DownloadItem {
+    gid: int,
+    title: string,
+    downloaded: int,
+    total: int,
+    status: int, // 0 未下载 1 下载中 2 已完成 3 失败
+    ratio: float,
 }
 
 export struct LoadState {
@@ -127,7 +136,8 @@ export global Theme {
 }
 
 export component AppWindow inherits Window {
-    in-out property <length> safe-area-top: 0px;
+    // 默认给状态栏留位（Android 上 Slint 不自动 inset），否则顶栏按钮会被状态栏吞掉点击
+    in-out property <length> safe-area-top: 24px;
     in-out property <length> safe-area-bottom: 0px;
 
     title: "JHenTai";
@@ -175,7 +185,37 @@ export component AppWindow inherits Window {
     in-out property <int> reader-total: 0;
     in-out property <string> reader-error: "";
 
+    // ---- downloads page ----
+    in-out property <[DownloadItem]> downloads: [];
+
+    // ---- settings page ----
+    in-out property <bool> setting-is-ex: false;
+    in-out property <string> setting-proxy-address: "";
+    in-out property <string> setting-proxy-type: "system";
+    in-out property <bool> setting-domain-fronting: false;
+    in-out property <string> setting-read-direction: "Vertical";
+    in-out property <bool> setting-keep-awake: true;
+    in-out property <int> setting-download-concurrency: 3;
+    in-out property <bool> setting-download-original: false;
+    in-out property <bool> setting-pin-enabled: false;
+    in-out property <bool> setting-persistent: true;
+    in-out property <string> setting-version: "";
+    in-out property <bool> locked: false;
+
     // ---- callbacks to Rust ----
+    callback toggle-site();
+    callback set-proxy(string);
+    callback toggle-domain-fronting();
+    callback cycle-read-direction();
+    callback toggle-keep-awake();
+    callback bump-download-concurrency();
+    callback toggle-download-original();
+    callback set-pin(string);
+    callback unlock(string);
+    callback open-settings();
+    callback download();
+    callback open-downloads();
+    callback open-local-gallery(int);
     callback reader-step(int);
     callback open-reader();
     callback back();
@@ -197,7 +237,7 @@ export component AppWindow inherits Window {
                 padding-top: safe-area-top;
                 alignment: space-between;
 
-                if page == 1 : Button {
+                if page != 0 : Button {
                     text: "‹ Back";
                     clicked => { root.back(); }
                 }
@@ -215,13 +255,21 @@ export component AppWindow inherits Window {
 
                 HorizontalLayout {
                     spacing: 8px;
-                    Text {
+                    if page == 0 : Text {
                         text: total-text;
                         color: Theme.fg-dim;
                         font-size: 12px;
                         vertical-alignment: center;
                     }
-                    Button {
+                    if page == 0 : Button {
+                        text: "⇩";
+                        clicked => { root.open-downloads(); }
+                    }
+                    if page == 0 : Button {
+                        text: "≡";
+                        clicked => { root.open-settings(); }
+                    }
+                    if page == 0 : Button {
                         text: "↻";
                         clicked => { root.refresh(); }
                     }
@@ -267,6 +315,187 @@ export component AppWindow inherits Window {
             for gallery[index] in galleries : GalleryCard {
                 item: gallery;
                 clicked => { root.open-gallery(index); }
+            }
+        }
+
+        // 设置页（page 4）
+        if page == 4 : ScrollView {
+            VerticalLayout {
+                spacing: 10px;
+                padding: 12px;
+
+                Text { text: "Account & Site"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Rectangle {
+                    height: 48px; border-radius: 10px; background: Theme.card;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px;
+                        spacing: 12px;
+                        Text { text: "Site"; color: Theme.fg; font-size: 14px; vertical-alignment: center; }
+                        Button {
+                            text: setting-is-ex ? "EXHentai" : "E-Hentai";
+                            clicked => { root.toggle-site(); }
+                        }
+                    }
+                }
+
+                Text { text: "Network"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Rectangle {
+                    height: 108px; border-radius: 10px; background: Theme.card;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        Text { text: "Proxy (" + setting-proxy-type + ")"; color: Theme.fg-dim; font-size: 12px; }
+                        LineEdit {
+                            text: setting-proxy-address;
+                            placeholder-text: "host:port (empty = system proxy)";
+                            edited(text) => { root.set-proxy(text); }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Domain fronting"; color: Theme.fg-dim; font-size: 12px; vertical-alignment: center; }
+                            Button {
+                                text: setting-domain-fronting ? "On" : "Off";
+                                clicked => { root.toggle-domain-fronting(); }
+                            }
+                        }
+                    }
+                }
+
+                Text { text: "Reading"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Rectangle {
+                    height: 96px; border-radius: 10px; background: Theme.card;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Direction"; color: Theme.fg-dim; font-size: 12px; vertical-alignment: center; }
+                            Button { text: setting-read-direction; clicked => { root.cycle-read-direction(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Keep screen awake"; color: Theme.fg-dim; font-size: 12px; vertical-alignment: center; }
+                            Button { text: setting-keep-awake ? "On" : "Off"; clicked => { root.toggle-keep-awake(); } }
+                        }
+                    }
+                }
+
+                Text { text: "Download"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Rectangle {
+                    height: 96px; border-radius: 10px; background: Theme.card;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Concurrency"; color: Theme.fg-dim; font-size: 12px; vertical-alignment: center; }
+                            Button { text: setting-download-concurrency; clicked => { root.bump-download-concurrency(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Download original (needs login)"; color: Theme.fg-dim; font-size: 12px; vertical-alignment: center; }
+                            Button { text: setting-download-original ? "On" : "Off"; clicked => { root.toggle-download-original(); } }
+                        }
+                    }
+                }
+
+                Text { text: "Security"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Rectangle {
+                    height: 76px; border-radius: 10px; background: Theme.card;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        Text {
+                            text: setting-pin-enabled ? "App lock: on (type empty to disable)" : "App lock: off (set 4-8 digits)";
+                            color: Theme.fg-dim; font-size: 12px;
+                        }
+                        LineEdit {
+                            placeholder-text: "PIN";
+                            edited(text) => { root.set-pin(text); }
+                        }
+                    }
+                }
+
+                Text { text: "About"; color: Theme.fg; font-size: 13px; font-weight: 600; }
+                Rectangle {
+                    height: 132px; border-radius: 10px; background: Theme.card;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        Text { text: "JHenTai Rust " + setting-version; color: Theme.fg; font-size: 12px; }
+                        Text {
+                            text: setting-persistent ? "Data: persisted to db.sqlite" : "Database unavailable - settings and progress are NOT saved";
+                            color: setting-persistent ? Theme.fg-dim : Theme.danger;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        // Slint Royalty-free 许可要求：在一处展示 AboutSlint
+                        AboutSlint { }
+                    }
+                }
+            }
+        }
+
+        // 锁屏（启用 PIN 时覆盖在上面）
+        if locked : Rectangle {
+            background: Theme.bg;
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                Text { text: "Enter PIN"; color: Theme.fg; font-size: 16px; horizontal-alignment: center; }
+                LineEdit {
+                    input-type: password;
+                    edited(text) => { root.unlock(text); }
+                }
+            }
+        }
+
+        // 下载页（page 3）
+        if page == 3 : ScrollView {
+            VerticalLayout {
+                spacing: 8px;
+                padding: 12px;
+                if downloads.length == 0 : Text {
+                    text: "No downloads yet";
+                    color: Theme.fg-dim;
+                    horizontal-alignment: center;
+                }
+                for item in downloads : Rectangle {
+                    height: 72px;
+                    border-radius: 10px;
+                    background: Theme.card;
+                    clip: true;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        Text {
+                            text: item.title;
+                            color: Theme.fg;
+                            font-size: 14px;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Theme.placeholder;
+                            Rectangle {
+                                width: parent.width * item.ratio;
+                                height: 100%;
+                                border-radius: 3px;
+                                background: item.status == 3 ? Theme.danger : (item.status == 2 ? #3fb950 : Theme.accent);
+                            }
+                        }
+                        Text {
+                            text: item.downloaded + " / " + item.total
+                                + (item.status == 1 ? "  downloading…" : item.status == 2 ? "  done" : item.status == 3 ? "  failed" : "");
+                            color: Theme.fg-dim;
+                            font-size: 11px;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.open-local-gallery(item.gid); }
+                    }
+                }
             }
         }
 
@@ -392,9 +621,16 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                     }
 
-                    Button {
-                        text: "Read (" + detail-pages + " pages)";
-                        clicked => { root.open-reader(); }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button {
+                            text: "Read (" + detail-pages + " pages)";
+                            clicked => { root.open-reader(); }
+                        }
+                        Button {
+                            text: "Download";
+                            clicked => { root.download(); }
+                        }
                     }
 
                     Text { text: "Tags"; color: Theme.fg; font-size: 14px; font-weight: 600; }

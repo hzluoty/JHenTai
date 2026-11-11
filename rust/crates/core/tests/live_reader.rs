@@ -26,7 +26,13 @@ async fn full_read_pipeline() {
     // 1. 首页 → 第一个画廊
     let front = get(&client, &state, &resolver, consts::EH_INDEX).await.unwrap();
     let page = jhentai_core::parser::gallery_page(&front.body).unwrap();
-    let gallery = page.galleries.first().expect("首页应有画廊");
+    // 优先挑一个多页画廊，顺带覆盖缩略图分页抓取
+    let gallery = page
+        .galleries
+        .iter()
+        .find(|g| g.page_count.unwrap_or(0) > 40)
+        .or_else(|| page.galleries.first())
+        .expect("首页应有画廊");
 
     // 2. 详情 → 缩略图
     let detail_html = get(&client, &state, &resolver, &gallery.gallery_url.url()).await.unwrap();
@@ -39,6 +45,28 @@ async fn full_read_pipeline() {
         .await
         .expect("图片页应解析成功");
     assert!(image.url.starts_with("http"), "图片直链: {}", image.url);
+
+    // 3.5 多页缩略图：分页器解析 + 逐页抓取（下载/阅读都依赖它）
+    if detail.thumbnails_page_count > 1 {
+        let all = reader::fetch_all_thumbnails(
+            &client,
+            &state,
+            &resolver,
+            &detail.gallery_url,
+            &detail.thumbnails,
+            detail.thumbnails_page_count,
+        )
+        .await
+        .expect("多页缩略图应能抓全");
+        eprintln!(
+            "thumbnails: first page {} -> all {} ({} pages)",
+            detail.thumbnails.len(),
+            all.len(),
+            detail.thumbnails_page_count
+        );
+        assert!(all.len() > detail.thumbnails.len(), "多页画廊应抓到更多缩略图");
+        assert_eq!(all.len() as i64, detail.page_count, "缩略图总数应等于页数");
+    }
 
     // 4. 下载 `#img` 直链 + 解码（带 referer）
     let bitmap = reader::load_image_with_referer(&client, &state, &resolver, &image.url, Some(&page_url), 1080)

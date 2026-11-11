@@ -40,7 +40,7 @@ fn run(app: slint::android::AndroidApp) -> Result<(), Box<dyn std::error::Error>
 
     slint::android::init(app).map_err(|e| format!("slint android init: {e}"))?;
 
-    let platform = jhentai_platform::android::AndroidPlatform;
+    let platform = std::sync::Arc::new(jhentai_platform::android::AndroidPlatform);
     let mut options = jhentai_core::net::ClientOptions::default();
     options.enable_domain_fronting = true;
     // 系统代理由 ConnectivityManager/settings 读，reqwest 不自动读
@@ -49,8 +49,12 @@ fn run(app: slint::android::AndroidApp) -> Result<(), Box<dyn std::error::Error>
         .map(|proxy| if proxy.starts_with("http") { proxy } else { format!("http://{proxy}") });
 
     let data_dir = platform.external_data_path();
-    let controller = Rc::new(crate::AppController::new(options, Some(data_dir))?);
+    let controller = Rc::new(crate::AppController::new(options, Some(data_dir), platform.clone())?);
     controller.wire_callbacks();
+    controller.load_settings();
+    if controller.is_locked() {
+        controller.window().set_locked(true);
+    }
     controller.load_first_page();
     controller.run()?;
     Ok(())

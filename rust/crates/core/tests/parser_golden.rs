@@ -109,9 +109,18 @@ fn image_page_fields() {
 }
 
 #[test]
-fn multi_page_detail_fixture_is_parsed_once() {
-    // 单页画廊：thumbnails_page_count 为 1，避免阅读器走多页补全分支
+fn multi_page_detail_fixture_has_pager() {
+    // 196 张缩略图、每页 20 张 → 阅读器/下载器必须走多页补全
     let result = detail_page(&fixture("gallery_detail.html")).unwrap();
-    assert_eq!(result.detail.thumbnails_page_count, 1);
-    assert!(!result.detail.thumbnails.is_empty());
+    assert_eq!(result.detail.thumbnails_page_count, 10);
+    assert_eq!(result.detail.thumbnails.len(), 20, "首页 20 张");
+}
+
+#[test]
+fn thumbnail_pager_page_count() {
+    // 196 张缩略图、每页 20 张 → 分页器应有 10 页
+    let result = detail_page(&fixture("gallery_detail.html")).unwrap();
+    eprintln!("thumbnails_page_count = {}", result.detail.thumbnails_page_count);
+    eprintln!("thumbnails = {}", result.detail.thumbnails.len());
+    assert_eq!(result.detail.thumbnails_page_count, 10, "196 张 / 每页 20 张 = 10 页");
 }
