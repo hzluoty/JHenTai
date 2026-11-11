@@ -1,0 +1,285 @@
+// JHenTai Rust 版主窗口：底部导航 + 画廊列表 + 详情。
+// 组件拆分遵循计划 §4.3：每页一个组件 + controller，单 Window + Rust 侧 Navigator。
+
+import { Button, ScrollView, ListView, VerticalBox, HorizontalBox, StandardListView } from "std-widgets.slint";
+
+export struct GalleryItem {
+    gid: int,
+    title: string,
+    category: string,
+    cover: image,
+    page-count: int,
+    rating: float,
+    uploader: string,
+    publish-time: string,
+    language: string,
+    favorite-color: color,
+    has-rated: bool,
+}
+
+export struct LoadState {
+    loading: bool,
+    error: string,
+    prev-gid: string,
+    next-gid: string,
+    total: string,
+}
+
+// 单张卡片：列表模式
+component GalleryCard inherits Rectangle {
+    in property <GalleryItem> item;
+    callback clicked();
+
+    height: 96px;
+    border-radius: 12px;
+    background: Theme.card;
+    clip: true;
+
+    HorizontalLayout {
+        padding: 8px;
+        spacing: 10px;
+
+        // 封面：保持 3:4 比例，懒加载由 Rust 侧按可见范围喂图
+        Rectangle {
+            width: 60px;
+            border-radius: 6px;
+            background: Theme.placeholder;
+            clip: true;
+            Image {
+                source: root.item.cover;
+                width: 60px;
+                height: 100%;
+                image-fit: cover;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 4px;
+            alignment: start;
+
+            Text {
+                text: root.item.title;
+                color: Theme.fg;
+                font-size: 14px;
+                wrap: word-wrap;
+                max-height: 40px;
+                overflow: elide;
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                Rectangle {
+                    width: category-text.preferred-width + 10px;
+                    height: 18px;
+                    border-radius: 4px;
+                    background: root.item.favorite-color;
+                    category-text := Text {
+                        text: root.item.category;
+                        color: #ffffff;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: root.item.page-count > 0 ? root.item.page-count + "P" : "";
+                    color: Theme.fg-dim;
+                    font-size: 11px;
+                }
+                Text {
+                    text: root.item.rating > 0 ? "★ " + Math.round(root.item.rating * 10) / 10 : "";
+                    color: Theme.star;
+                    font-size: 11px;
+                }
+            }
+
+            Text {
+                text: root.item.uploader;
+                color: Theme.fg-dim;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export global Theme {
+    in-out property <color> bg: #16161a;
+    in-out property <color> card: #232329;
+    in-out property <color> fg: #ececf1;
+    in-out property <color> fg-dim: #9a9aa5;
+    in-out property <color> accent: #6750a4;
+    in-out property <color> star: #fcb417;
+    in-out property <color> placeholder: #33333c;
+    in-out property <color> danger: #e5484d;
+}
+
+export component AppWindow inherits Window {
+    in-out property <length> safe-area-top: 0px;
+    in-out property <length> safe-area-bottom: 0px;
+
+    title: "JHenTai";
+    background: Theme.bg;
+    preferred-width: 400px;
+    preferred-height: 800px;
+
+    // ---- data exposed to Rust ----
+    in-out property <[GalleryItem]> galleries: [];
+    in-out property <bool> loading: false;
+    in-out property <string> error-text: "";
+    in-out property <string> total-text: "";
+    in-out property <int> current-tab: 0;
+    in-out property <bool> can-go-next: false;
+    in-out property <bool> can-go-prev: false;
+    in-out property <int> page-index: 0;
+    in-out property <bool> has-items: galleries.length > 0;
+
+    // ---- callbacks to Rust ----
+    callback refresh();
+    callback next-page();
+    callback prev-page();
+    callback open-gallery(int);
+    callback select-tab(int);
+
+    VerticalBox {
+        // 顶栏
+        Rectangle {
+            height: 52px + safe-area-top;
+            background: Theme.card;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: safe-area-top;
+                alignment: space-between;
+
+                Text {
+                    text: current-tab == 0 ? "Front Page"
+                        : current-tab == 1 ? "Popular"
+                        : current-tab == 2 ? "Ranklist"
+                        : current-tab == 3 ? "Favorites"
+                        : current-tab == 4 ? "Watched" : "History";
+                    color: Theme.fg;
+                    font-size: 18px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: total-text;
+                        color: Theme.fg-dim;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                    Button {
+                        text: "↻";
+                        clicked => { root.refresh(); }
+                    }
+                }
+            }
+        }
+
+        // 列表区
+        if !has-items : Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                if loading : Text {
+                    text: "Loading…";
+                    color: Theme.fg-dim;
+                    horizontal-alignment: center;
+                }
+
+                if !loading && error-text != "" : VerticalLayout {
+                    spacing: 12px;
+                    Text {
+                        text: error-text;
+                        color: Theme.danger;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                        padding: 24px;
+                    }
+                    Button {
+                        text: "Retry";
+                        clicked => { root.refresh(); }
+                    }
+                }
+
+                if !loading && error-text == "" : Text {
+                    text: "No galleries";
+                    color: Theme.fg-dim;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if has-items : ListView {
+            for gallery[index] in galleries : GalleryCard {
+                item: gallery;
+                clicked => { root.open-gallery(index); }
+            }
+        }
+
+        // 翻页条
+        Rectangle {
+            height: 44px;
+            background: Theme.card;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                alignment: center;
+                Button {
+                    text: "‹ Prev";
+                    enabled: can-go-prev;
+                    clicked => { root.prev-page(); }
+                }
+                Text {
+                    text: "Page " + (page-index + 1);
+                    color: Theme.fg-dim;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                Button {
+                    text: "Next ›";
+                    enabled: can-go-next;
+                    clicked => { root.next-page(); }
+                }
+            }
+        }
+
+        // 底部导航
+        Rectangle {
+            height: 56px + safe-area-bottom;
+            background: Theme.card;
+            HorizontalLayout {
+                padding-bottom: safe-area-bottom;
+                padding-left: 4px;
+                padding-right: 4px;
+                spacing: 2px;
+                for tab[index] in ["Front", "Popular", "Rank", "Fav", "Watch", "History"] : Rectangle {
+                    horizontal-stretch: 1;
+                    background: index == current-tab ? Theme.accent : transparent;
+                    border-radius: 8px;
+                    Text {
+                        text: tab;
+                        color: Theme.fg;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.select-tab(index); }
+                    }
+                }
+            }
+        }
+    }
+}

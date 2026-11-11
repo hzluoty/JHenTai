@@ -1,0 +1,20 @@
+//! 桌面入口（开发用）。Android 走 `android_main`（见 src/android.rs）。
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use jhentai_platform::Platform;
+    let platform = jhentai_platform::host::HostPlatform;
+    let mut options = jhentai_core::net::ClientOptions::default();
+    if let Ok(proxy) = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("HTTP_PROXY")) {
+        options.proxy = Some(proxy);
+    }
+    options.enable_domain_fronting = false;
+
+    let controller = std::rc::Rc::new(jhentai::AppController::new(options)?);
+    controller.wire_callbacks();
+    controller.window().set_current_tab(0);
+    controller.load_page(0);
+
+    eprintln!("JHenTai {} ({})", platform.app_version(), platform.device_info());
+    controller.run()?;
+    Ok(())
+}

@@ -1,0 +1,8 @@
+/target
+# 构建产物与截图
+/crates/app/android/app/build/
+/crates/app/android/.gradle/
+/crates/app/android/build/
+/crates/app/android/local.properties
+/crates/app/android/app/src/main/jniLibs/
+*.png
