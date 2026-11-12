@@ -22,6 +22,7 @@ pub struct UiEvents {
     pub more_thumbs: AtomicBool,
     pub downloads: AtomicBool,
     pub account: AtomicBool,
+    pub tag_translation: AtomicBool,
 }
 
 impl UiEvents {
@@ -31,6 +32,14 @@ impl UiEvents {
 
     pub fn request_details_thumbs(&self) {
         self.details_thumbs.store(true, Ordering::Relaxed);
+    }
+
+    pub fn request_tag_translation(&self) {
+        self.tag_translation.store(true, Ordering::Relaxed);
+    }
+
+    pub fn take_tag_translation(&self) -> bool {
+        self.tag_translation.swap(false, Ordering::Relaxed)
     }
 
     pub fn request_account(&self) {
@@ -98,6 +107,9 @@ pub fn start(timer: &Timer, controller: &Rc<crate::AppController>, interval: Dur
         }
         if this.ui_events.take_account() {
             this.apply_account_to_ui();
+        }
+        if this.ui_events.take_tag_translation() {
+            this.load_tag_translation();
         }
         // 返回键：Java 主线程只置标志，出栈必须在 UI 线程
         if crate::nav::BACK_REQUESTED.swap(false, Ordering::Relaxed) {
@@ -170,5 +182,9 @@ mod tests {
         events.request_account();
         assert!(events.take_account());
         assert!(!events.take_account());
+
+        events.request_tag_translation();
+        assert!(events.take_tag_translation());
+        assert!(!events.take_tag_translation());
     }
 }

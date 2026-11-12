@@ -22,7 +22,11 @@ pub struct DetailsState {
 }
 
 /// 详情 → Slint 头部展示用的字段
-pub fn apply_detail(window: &AppWindow, detail: &GalleryDetail) {
+pub fn apply_detail(
+    window: &AppWindow,
+    detail: &GalleryDetail,
+    translation: &jhentai_core::service::tag_translation::TagTranslation,
+) {
     window.set_detail_title(detail.raw_title.clone().into());
     window.set_detail_japanese_title(detail.japanese_title.clone().unwrap_or_default().into());
     window.set_detail_category(detail.category.clone().into());
@@ -38,11 +42,18 @@ pub fn apply_detail(window: &AppWindow, detail: &GalleryDetail) {
     window.set_detail_is_favorite(detail.is_favorite());
     window.set_detail_expunged(detail.is_expunged);
 
-    // 标签按 namespace 分组展示："namespace: key key"
+    // 标签按 namespace 分组展示，有翻译时附在后面（"female: sole female（单女）"）
     let mut tag_lines: Vec<slint::SharedString> = Vec::new();
     for (namespace, tags) in detail.tags.iter() {
-        let keys: Vec<String> = tags.iter().map(|t| t.tag_data.key.clone()).collect();
-        tag_lines.push(format!("{namespace}: {}", keys.join(", ")).into());
+        let keys: Vec<String> = tags
+            .iter()
+            .map(|t| match translation.tag_name(namespace, &t.tag_data.key) {
+                Some(name) if name != t.tag_data.key => format!("{}（{}）", t.tag_data.key, name),
+                _ => t.tag_data.key.clone(),
+            })
+            .collect();
+        let ns_label = translation.namespace_name(namespace).unwrap_or(namespace);
+        tag_lines.push(format!("{namespace} ({}): {}", ns_label, keys.join(", ")).into());
     }
     window.set_detail_tags(Rc::new(slint::VecModel::from(tag_lines)).into());
 }
@@ -127,6 +138,8 @@ impl crate::AppController {
         let resolver = self.resolver.clone();
         let window_weak = self.window.as_weak();
         let details = self.details.clone();
+        // TagTranslation 是纯数据：克隆一份进 async 任务，避免把 !Send 的 Rc 带过去
+        let translation_snapshot = std::sync::Arc::new(self.tag_translation.borrow().clone());
         let ui_events = self.ui_events.clone();
 
 
@@ -148,7 +161,7 @@ impl crate::AppController {
                 match parsed {
                     Ok(result) => {
                         let detail = result.detail;
-                        apply_detail(&window, &detail);
+                        apply_detail(&window, &detail, &translation_snapshot);
                         window.set_detail_thumbnails(
                             Rc::new(slint::VecModel::from(thumbnails_to_items(&detail))).into(),
                         );

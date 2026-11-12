@@ -427,6 +427,69 @@ impl crate::AppController {
         self.window.set_block_rules(Rc::new(slint::VecModel::from(items)).into());
     }
 
+    /// 从 `tag` 表加载标签翻译（启动时调用；表空时是空集，详情页显示原文）
+    pub fn load_tag_translation(self: &Rc<Self>) {
+        let Some(path) = self.db_path.clone() else {
+            return;
+        };
+        let Ok(conn) = jhentai_core::db::open(&path) else {
+            return;
+        };
+        if let Ok(loaded) = jhentai_core::service::tag_translation::load(&conn) {
+            *self.tag_translation.borrow_mut() = loaded;
+        }
+        self.refresh_block_rules_ui();
+    }
+
+    /// 下载并入库标签翻译（约 7MB），完成后在 UI 线程重载
+    pub fn update_tag_translation(self: &Rc<Self>) {
+        let Some(path) = self.db_path.clone() else {
+            self.window.set_account_status("database unavailable".into());
+            return;
+        };
+        self.window.set_account_status("downloading tag database…".into());
+
+        let client = self.client.lock().unwrap().clone();
+        let net = self.net.clone();
+        let resolver = self.resolver.clone();
+        let window_weak = self.window.as_weak();
+        let ui_events = self.ui_events.clone();
+
+        self.runtime.spawn(async move {
+            let result = jhentai_core::service::tag_translation::fetch(&client, &net, &resolver).await;
+            let message = match &result {
+                Ok(db) => {
+                    // 入库是 CPU/IO 活（10 万+ 行），放阻塞线程池
+                    let db_for_store = db.clone();
+                    let namespaces = db.namespaces.len();
+                    let path = path.clone();
+                    let stored = tokio::task::spawn_blocking(move || {
+                        jhentai_core::db::open(&path)
+                            .map_err(|e| e.to_string())
+                            .and_then(|conn| {
+                                jhentai_core::service::tag_translation::store(&conn, &db_for_store).map_err(|e| e.to_string())
+                            })
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()));
+                    match stored {
+                        Ok(()) => format!("tag database updated ({namespaces} namespaces)"),
+                        Err(e) => format!("store failed: {e}"),
+                    }
+                }
+                Err(e) => format!("download failed: {e}"),
+            };
+
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = window_weak.upgrade() {
+                    window.set_account_status(message.into());
+                }
+                // 重载由 UI 泵在 UI 线程执行（Rc 不能跨线程）
+                ui_events.request_tag_translation();
+            });
+        });
+    }
+
     /// 从 `block_rule` 表加载屏蔽规则（启动时与规则编辑后调用）
     pub fn load_block_rules(self: &Rc<Self>) {
         let Some(path) = self.db_path.clone() else {

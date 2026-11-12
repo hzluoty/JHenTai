@@ -264,6 +264,7 @@ export component AppWindow inherits Window {
     callback open-settings();
     callback download();
     callback toggle-favorite();
+    callback update-tag-translation();
     callback open-downloads();
     callback open-local-gallery(int);
     callback reader-step(int);
@@ -725,6 +726,16 @@ export component AppWindow inherits Window {
                             placeholder-text: "PIN";
                             edited(text) => { root.set-pin(text); }
                         }
+                    }
+                }
+
+                Rectangle {
+                    height: 48px; border-radius: 10px; background: Theme.card;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px;
+                        spacing: 12px;
+                        Text { text: "Tag translation"; color: Theme.fg; font-size: 14px; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { text: "Update"; clicked => { root.update-tag-translation(); } }
                     }
                 }
 

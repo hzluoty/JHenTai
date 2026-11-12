@@ -204,6 +204,8 @@ pub struct AppController {
     pub(crate) ui_pump_timer: slint::Timer,
     /// 平台能力（屏幕常亮/权限/分享等）
     pub(crate) platform: Arc<dyn jhentai_platform::Platform>,
+    /// 标签翻译（从 `tag` 表读，或设置页下载更新）
+    pub(crate) tag_translation: std::rc::Rc<std::cell::RefCell<jhentai_core::service::tag_translation::TagTranslation>>,
     /// 本地屏蔽规则（从 `block_rule` 表加载；列表渲染前过滤）
     pub(crate) block_rules: Arc<Mutex<jhentai_core::service::block_rule::BlockRuleSet>>,
     /// db.sqlite 路径（屏蔽规则需要单独连接）
@@ -265,6 +267,7 @@ impl AppController {
             ui_events: Arc::new(crate::pages::pump::UiEvents::default()),
             ui_pump_timer: slint::Timer::default(),
             platform,
+            tag_translation: std::rc::Rc::new(std::cell::RefCell::new(Default::default())),
             block_rules: Arc::new(Mutex::new(Default::default())),
             db_path: opened.db_path.clone(),
             suggestion_input: Arc::new(Mutex::new(String::new())),
@@ -387,6 +390,13 @@ impl AppController {
         self.window.on_toggle_domain_fronting(move || {
             if let Some(this) = weak.upgrade() {
                 this.toggle_domain_fronting();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.window.on_update_tag_translation(move || {
+            if let Some(this) = weak.upgrade() {
+                this.update_tag_translation();
             }
         });
 
@@ -675,6 +685,7 @@ impl AppController {
         let ui_events = self.ui_events.clone();
         let cursor_for_state = cursor.clone();
         let block_rules_clone = self.block_rules.clone();
+        let tag_translation_clone = std::sync::Arc::new(self.tag_translation.borrow().clone());
 
         self.runtime.spawn(async move {
             let parsed = match get(&client, &net, &resolver, &url).await {
@@ -690,12 +701,18 @@ impl AppController {
                 match parsed {
                     Ok(page) => {
                         // 屏蔽规则：命中规则的分镜不进 UI（一次加锁，空集时跳过匹配）
+                        // 带标签翻译匹配，让按翻译名写的规则也能生效
+                        let translation_for_rules = tag_translation_clone.clone();
                         let galleries: Vec<_> = {
                             let set = block_rules_clone.lock().unwrap();
                             if set.is_empty() {
                                 page.galleries.clone()
                             } else {
-                                page.galleries.iter().filter(|g| !set.blocks_gallery(g)).cloned().collect()
+                                page.galleries
+                                    .iter()
+                                    .filter(|g| !set.blocks_gallery_with(g, Some(translation_for_rules.as_ref())))
+                                    .cloned()
+                                    .collect()
                             }
                         };
                         let items: Vec<GalleryItem> = galleries.iter().map(gallery_to_item).collect();

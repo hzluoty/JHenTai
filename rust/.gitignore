@@ -6,3 +6,7 @@
 /crates/app/android/local.properties
 /crates/app/android/app/src/main/jniLibs/
 *.png
+
+# 网络探查产物不要入库（7MB 级 JSON，别写进仓库根目录）
+/tt.json
+/db.html.json

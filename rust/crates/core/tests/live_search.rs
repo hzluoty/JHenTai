@@ -79,3 +79,50 @@ async fn tag_suggest_returns_tags() {
     assert!(!tags.is_empty(), "sole 应有联想结果");
     assert!(tags.iter().any(|t| t.namespace == "female" && t.key == "sole female"));
 }
+
+/// 标签翻译库能下载并解析（7MB JSON，超时放宽）
+#[tokio::test]
+#[ignore = "需要真实网络"]
+async fn tag_translation_database_downloads() {
+    let state: Arc<Mutex<NetState>> = NetState::shared(options());
+    let resolver = FrontingResolver::new();
+    let client = build_client(&state.lock().unwrap(), &resolver).unwrap();
+
+    let db = jhentai_core::service::tag_translation::fetch(&client, &state, &resolver)
+        .await
+        .expect("翻译库应能下载");
+    assert!(db.namespace_name("female").is_some(), "应有 female 命名空间");
+    assert!(db.tag_name("female", "sole female").is_some(), "应有 sole female 的翻译");
+    eprintln!(
+        "namespaces={} female tags={}",
+        db.namespaces.len(),
+        db.tags.get("female").map(|m| m.len()).unwrap_or(0)
+    );
+}
+
+/// 翻译库入库耗时（10 万+ 行必须在事务里，否则模拟器上跑几分钟）
+#[tokio::test]
+#[ignore = "需要真实网络"]
+async fn tag_translation_store_is_fast() {
+    let state: Arc<Mutex<NetState>> = NetState::shared(options());
+    let resolver = FrontingResolver::new();
+    let client = build_client(&state.lock().unwrap(), &resolver).unwrap();
+    let db = jhentai_core::service::tag_translation::fetch(&client, &state, &resolver)
+        .await
+        .expect("翻译库应能下载");
+
+    let mut path = std::env::temp_dir();
+    path.push(format!("jhentai-tagstore-{}.sqlite", std::process::id()));
+    let conn = jhentai_core::db::open(&path).unwrap();
+    let start = std::time::Instant::now();
+    jhentai_core::service::tag_translation::store(&conn, &db).expect("入库应成功");
+    let elapsed = start.elapsed();
+
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM tag", [], |r| r.get(0)).unwrap();
+    eprintln!("stored {count} tags in {elapsed:?}");
+    assert!(count > 40_000, "应写入 4 万+ 行，实际 {count}");
+    assert!(elapsed < std::time::Duration::from_secs(20), "入库太慢：{elapsed:?}");
+
+    drop(conn);
+    let _ = std::fs::remove_file(path);
+}

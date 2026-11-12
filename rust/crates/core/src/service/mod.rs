@@ -9,3 +9,4 @@ pub mod history;
 pub mod read_progress;
 pub mod reader;
 pub mod search;
+pub mod tag_translation;

@@ -166,6 +166,15 @@ impl BlockRuleSet {
     ///
     /// 语义与 Dart 一致：**同一 group 内所有规则都命中才屏蔽，组与组之间任一命中即屏蔽**。
     pub fn blocks_gallery(&self, gallery: &crate::model::Gallery) -> bool {
+        self.blocks_gallery_with(gallery, None)
+    }
+
+    /// 带标签翻译的版本：按翻译名写的规则也能命中（对齐 Dart 的 `GalleryTagAttributeGetter`）
+    pub fn blocks_gallery_with(
+        &self,
+        gallery: &crate::model::Gallery,
+        translation: Option<&crate::service::tag_translation::TagTranslation>,
+    ) -> bool {
         let mut groups: Vec<(&str, Vec<&BlockRule>)> = Vec::new();
         for rule in &self.rules {
             match groups.iter_mut().find(|(id, _)| *id == rule.group_id.as_str()) {
@@ -176,7 +185,7 @@ impl BlockRuleSet {
 
         groups.iter().any(|(_, rules)| {
             rules.iter().all(|rule| {
-                let values = gallery_values(gallery, rule.attribute);
+                let values = gallery_values(gallery, rule.attribute, translation);
                 match rule.attribute {
                     BlockAttribute::Score => false,
                     _ => rule.matches_values(&values),
@@ -187,7 +196,11 @@ impl BlockRuleSet {
 }
 
 /// 某属性在画廊上的候选值（与 Dart 的 attribute getter 对应）
-fn gallery_values(gallery: &crate::model::Gallery, attribute: BlockAttribute) -> Vec<String> {
+fn gallery_values(
+    gallery: &crate::model::Gallery,
+    attribute: BlockAttribute,
+    translation: Option<&crate::service::tag_translation::TagTranslation>,
+) -> Vec<String> {
     match attribute {
         BlockAttribute::Title => vec![gallery.title.clone()],
         BlockAttribute::Uploader => gallery.uploader.clone().map(|u| vec![u]).unwrap_or_default(),
@@ -195,8 +208,15 @@ fn gallery_values(gallery: &crate::model::Gallery, attribute: BlockAttribute) ->
         BlockAttribute::Tag => gallery
             .tags
             .iter()
-            .flat_map(|(_, tags)| {
-                tags.iter().flat_map(|t| [t.tag_data.full(), t.tag_data.key.clone()])
+            .flat_map(|(namespace, tags)| {
+                tags.iter().flat_map(move |t| {
+                    let mut values = vec![t.tag_data.full(), t.tag_data.key.clone()];
+                    // 追加翻译名，让「按中文标签写的规则」也能命中
+                    if let Some(translation) = translation {
+                        values.extend(translation.match_values(namespace, &t.tag_data.key));
+                    }
+                    values
+                })
             })
             .collect(),
         // 评论属性不作用于画廊
@@ -438,6 +458,21 @@ mod tests {
         assert!(BlockRuleSet::new(vec![rule(BlockAttribute::Gid, BlockPattern::Equal, "42")]).blocks_gallery(&g));
         // 非法正则不应崩溃，也不应命中
         assert!(!BlockRuleSet::new(vec![rule(BlockAttribute::Title, BlockPattern::Regex, "[")]).blocks_gallery(&g));
+    }
+
+    #[test]
+    fn translated_tag_names_match_rules() {
+        use crate::service::tag_translation::TagTranslation;
+
+        let mut translation = TagTranslation::default();
+        translation.tags.entry("female".into()).or_default().insert("sole female".into(), "单女".into());
+
+        let g = gallery("x", None, &[("female", "sole female")]);
+        let rule = rule(BlockAttribute::Tag, BlockPattern::Equal, "单女");
+        // 没有翻译时按翻译名写的规则不命中
+        assert!(!BlockRuleSet::new(vec![rule.clone()]).blocks_gallery(&g));
+        // 有翻译时命中
+        assert!(BlockRuleSet::new(vec![rule]).blocks_gallery_with(&g, Some(&translation)));
     }
 
     #[test]
