@@ -47,3 +47,6 @@ app.*.map.json
 
 /lib/src/firebase_options.dart
 /assets/sentry_dsn
+
+# 发布产物（APK）
+/dist/
