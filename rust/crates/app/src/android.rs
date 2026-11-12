@@ -68,6 +68,7 @@ fn run(app: slint::android::AndroidApp) -> Result<(), Box<dyn std::error::Error>
     controller.load_settings();
     controller.load_search_history();
     controller.load_block_rules();
+    controller.load_tag_translation();
     controller.restore_account();
     if controller.is_locked() {
         controller.window().set_locked(true);
